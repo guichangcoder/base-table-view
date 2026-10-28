@@ -4,6 +4,11 @@ import type { FieldMetaLite, TableMetaLite } from '../types';
 
 const FT = FieldType as any;
 
+/** SDK 已建模的数值类型值，用于识别「SDK 未认知的新类型」 */
+const KNOWN_TYPE_VALUES = new Set<number>(
+  Object.values(FT).filter((v) => typeof v === 'number') as number[],
+);
+
 const pick = (names: string[]): number[] =>
   names.map((n) => FT[n]).filter((v) => typeof v === 'number') as number[];
 
@@ -41,6 +46,38 @@ export const EDITABLE_TYPES = pick([
 
 /** 文本类，可用于关键词搜索 */
 export const TEXT_TYPES = pick(['Text', 'Phone', 'Url', 'Email']);
+
+/**
+ * 「按钮」字段：SDK 的数值枚举里没有 Button（只在 FieldUIType 里有 "Button"），
+ * 与多维表格开放接口一致取 3001。点击由数据表执行按钮绑定的动作（工作流/打开链接）。
+ */
+export const BUTTON_TYPE = 3001;
+
+/**
+ * 「按钮」字段判定（按类型值）。
+ * - 多维表格字段类型里 3001 = 按钮；
+ * - JSSDK 的数值枚举里没有 Button 成员，宿主也可能直接返回字符串 "Button"。
+ */
+export function isButtonType(type: unknown): boolean {
+  if (String(type) === 'Button') return true;
+  const n = Number(type);
+  return Number.isFinite(n) && n === BUTTON_TYPE;
+}
+
+/**
+ * 「按钮」字段判定（多信号）。
+ * 依次判断：
+ * 1. property 为 `{ color: number, title: string }` —— 按钮字段独有，最可靠；
+ * 2. 类型值是 3001 或字符串 "Button"；
+ * 3. 类型值是 SDK 未建模的非 0 数值（宿主可能用与开放接口不同的类型值）。
+ */
+function detectButton(rawType: unknown, prop: any): boolean {
+  if (prop && (typeof prop.title === 'string' || typeof prop.color === 'number')) return true;
+  if (isButtonType(rawType)) return true;
+  const n = Number(rawType);
+  if (!Number.isFinite(n) || n === 0 || KNOWN_TYPE_VALUES.size < 5) return false;
+  return !KNOWN_TYPE_VALUES.has(n);
+}
 
 export function isReadonlyType(type: number): boolean {
   return READONLY_TYPES.includes(type);
@@ -97,7 +134,19 @@ async function resolveTable(tableId: string, errors: string[]): Promise<any | nu
 
 function mapFieldMeta(m: any): FieldMetaLite {
   const type = Number(m.type);
-  const prop = m.property ?? {};
+  let prop = m.property ?? {};
+  if (typeof prop === 'string') {
+    try {
+      prop = JSON.parse(prop);
+    } catch {
+      prop = {};
+    }
+  }
+  const isButton = detectButton(m.type, prop);
+  if (!isButton && !KNOWN_TYPE_VALUES.has(type)) {
+    // 宿主返回了 SDK 未建模的类型：把原始元信息打出来，便于定位（如按钮字段）
+    console.info('[baseService] 未识别的字段类型', { name: m.name, rawType: m.type, meta: m });
+  }
   return {
     id: String(m.id),
     name: String(m.name ?? m.id),
@@ -110,6 +159,9 @@ function mapFieldMeta(m: any): FieldMetaLite {
     editable: isEditableType(type),
     readonlyType: isReadonlyType(type),
     unsupported: isUnsupportedType(type),
+    isButton,
+    buttonTitle: isButton && typeof prop.title === 'string' ? prop.title : undefined,
+    buttonColor: isButton && typeof prop.color === 'number' ? prop.color : undefined,
   };
 }
 

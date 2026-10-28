@@ -900,6 +900,7 @@ p.cfg-hint {
 .wb-main-head {
   display: flex;
   flex-shrink: 0;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -926,7 +927,10 @@ p.cfg-hint {
 .wb-main-actions {
   display: flex;
   flex-shrink: 0;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
   gap: 8px;
 }
 
@@ -1032,6 +1036,15 @@ p.cfg-hint {
 
 .field-value.empty {
   color: var(--c-text-3);
+}
+
+/* --- 数据表「按钮」字段 --- */
+
+.record-button.semi-button {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 6px;
 }
 
 /* --- 关联字段纵向展开 --- */

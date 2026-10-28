@@ -151,6 +151,15 @@ export function syncConfig(config: PluginData, fields: FieldMetaLite[]): PluginD
   };
 }
 
+/**
+ * 字段是否按「按钮」渲染：用户手动指定优先，否则用宿主人识别的结果。
+ */
+export function isButtonField(field: FieldMetaLite | undefined, cfg?: FieldConfig): boolean {
+  if (!field) return false;
+  if (cfg?.asButton !== undefined) return cfg.asButton;
+  return !!field.isButton;
+}
+
 export function setFieldConfig(
   config: PluginData,
   fieldId: string,

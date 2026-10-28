@@ -1,8 +1,9 @@
 import { Checkbox, Input, Select, Tag } from '@douyinfe/semi-ui';
 import type { FieldConfig, FieldMetaLite, PluginData } from '../../types';
-import { setFieldConfig } from '../../utils/configOps';
+import { setFieldConfig, isButtonField } from '../../utils/configOps';
 import { EMPHASIS_COLORS } from '../../utils/palette';
 import { FieldType } from '@lark-base-open/js-sdk';
+import { BUTTON_TYPE } from '../../services/baseService';
 
 const FT = FieldType as any;
 
@@ -32,10 +33,14 @@ const TYPE_LABEL: Record<number, string> = {
   [FT.Progress]: '进度',
   [FT.Rating]: '评分',
   [FT.Email]: '邮箱',
+  [BUTTON_TYPE]: '按钮',
 };
 
 export function typeLabel(type: number): string {
-  return TYPE_LABEL[type] ?? '其他';
+  const label = TYPE_LABEL[type];
+  if (label) return label;
+  // 未建模的类型把原始类型值带出来，便于排查（如「其他(3001)」）
+  return Number.isFinite(type) ? `其他(${type})` : '其他';
 }
 
 interface Props {
@@ -80,6 +85,8 @@ export function FieldSection({ config, fields, onChange }: Props) {
       </div>
       <p className="cfg-hint">
         「必填」只对前端可编辑字段生效，提交时会校验；只读字段（公式、创建时间等）不参与必填。「可编辑」关闭后该字段在前端仅展示、置灰不可修改。
+        <br />
+        字段名后的类型标签可点击：切成「按钮」表示该字段在前端渲染成按钮（用于数据表里的按钮字段），再点一下恢复按普通字段展示。
       </p>
 
       <div className="field-table">
@@ -101,13 +108,19 @@ export function FieldSection({ config, fields, onChange }: Props) {
           const readonlyCfg = cfg?.readonly === true;
           const editable = !typeDisabled && !readonlyCfg;
           const requiredDisabled = typeDisabled || readonlyCfg;
+          const isBtn = isButtonField(field, cfg);
 
           return (
             <div className="field-row" key={field.id}>
               <div className="field-name-cell">
                 <span className={`field-name${visible ? '' : ' dim'}`}>{field.name}</span>
-                <Tag size="small" color={field.readonlyType ? 'grey' : 'light-blue'}>
-                  {typeLabel(field.type)}
+                <Tag
+                  size="small"
+                  color={isBtn ? 'blue' : field.readonlyType ? 'grey' : 'light-blue'}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => patch(field.id, { asButton: isBtn ? false : true })}
+                >
+                  {isBtn ? '按钮' : typeLabel(field.type)}
                 </Tag>
                 {field.readonlyType ? (
                   <Tag size="small" color="white">

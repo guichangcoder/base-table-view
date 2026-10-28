@@ -16,6 +16,11 @@ export interface FieldConfig {
   /** 展示用别名，留空则用字段原名 */
   label?: string;
   emphasis?: EmphasisStyle;
+  /**
+   * 是否按「按钮」渲染。undefined = 自动识别，true/false = 用户手动指定。
+   * 数据表里的按钮字段由宿主返回的元信息可能不带可识别类型，手动指定是保底开关。
+   */
+  asButton?: boolean;
 }
 
 /** 分组配置 */
@@ -89,6 +94,12 @@ export interface FieldMetaLite {
   readonlyType: boolean;
   /** 是否结构不支持 */
   unsupported?: boolean;
+  /** 是否「按钮」类型字段：前端渲染成可点击按钮，点击执行数据表内的按钮动作 */
+  isButton?: boolean;
+  /** 按钮文案（字段 property.title） */
+  buttonTitle?: string;
+  /** 按钮配色索引（字段 property.color） */
+  buttonColor?: number;
 }
 
 export interface TableMetaLite {

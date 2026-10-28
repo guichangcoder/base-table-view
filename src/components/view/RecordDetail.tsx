@@ -1,11 +1,12 @@
 import type { CSSProperties } from 'react';
 import { Empty } from '@douyinfe/semi-ui';
 import type { FieldMetaLite, PluginData, RecordRow } from '../../types';
-import { visibleFieldIds } from '../../utils/configOps';
+import { isButtonField, visibleFieldIds } from '../../utils/configOps';
 import { formatCellValue } from '../../utils/valueConverter';
 import { hexToRgba, toneOf } from '../../utils/palette';
 import { fieldLabel } from '../../utils/validator';
 import { LinkBlock } from './LinkBlock';
+import { RecordButton } from './RecordButton';
 
 interface Props {
   config: PluginData;
@@ -82,15 +83,24 @@ export function RecordDetail({ config, fields, record }: Props) {
                         {fieldLabel(field, cfg)}
                         {cfg?.required ? <i className="field-required">*</i> : null}
                       </div>
-                      <div
-                        className={`field-value${text ? '' : ' empty'}`}
-                        style={{
-                          ...valueStyle(cfg?.emphasis),
-                          ...(highlight ? { background: hexToRgba(hlColor, 0.14) } : null),
-                        }}
-                      >
-                        {text || '—'}
-                      </div>
+                      {isButtonField(field, cfg) ? (
+                        <RecordButton
+                          tableId={config.tableId}
+                          recordId={record.recordId}
+                          field={field}
+                          title={cfg?.label || field.buttonTitle || field.name}
+                        />
+                      ) : (
+                        <div
+                          className={`field-value${text ? '' : ' empty'}`}
+                          style={{
+                            ...valueStyle(cfg?.emphasis),
+                            ...(highlight ? { background: hexToRgba(hlColor, 0.14) } : null),
+                          }}
+                        >
+                          {text || '—'}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

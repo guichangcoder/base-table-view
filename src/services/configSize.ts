@@ -19,6 +19,7 @@ function compactField(f: FieldConfig): FieldConfig {
   if (f.required) out.required = true;
   if (f.readonly) out.readonly = true;
   if (f.label && f.label.trim()) out.label = f.label.trim();
+  if (f.asButton !== undefined) out.asButton = !!f.asButton;
   if (f.emphasis) {
     const e: FieldConfig['emphasis'] = {};
     if (f.emphasis.bold) e.bold = true;
@@ -97,6 +98,7 @@ export function hydrateConfig(raw: unknown): PluginData {
             required: !!f.required,
             readonly: !!f.readonly,
             label: f.label ? String(f.label) : undefined,
+            asButton: typeof f.asButton === 'boolean' ? f.asButton : undefined,
             emphasis: f.emphasis && typeof f.emphasis === 'object' ? { ...f.emphasis } : undefined,
           }))
       : [],

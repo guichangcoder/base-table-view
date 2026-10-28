@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button, DatePicker, Input, InputNumber, Select, Switch, Tag, Toast } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, PluginData, RecordRow } from '../../types';
-import { visibleFieldIds } from '../../utils/configOps';
+import { isButtonField, visibleFieldIds } from '../../utils/configOps';
 import { isEditableType } from '../../services/baseService';
 import { listUserCandidates, type UserCandidate } from '../../services/recordService';
 import {
@@ -14,6 +14,7 @@ import {
 import { fieldLabel, validateRequired } from '../../utils/validator';
 import { toneOf } from '../../utils/palette';
 import { typeLabel } from '../config/FieldSection';
+import { RecordButton } from '../view/RecordButton';
 
 const FT = FieldType as any;
 
@@ -131,6 +132,18 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
   const renderInput = (field: FieldMetaLite) => {
     const cfg = cfgMap.get(field.id);
     const v = values[field.id];
+
+    // 按钮字段不是可录入的值：直接渲染按钮，编辑态可执行，新增态提示先保存
+    if (isButtonField(field, cfg)) {
+      return (
+        <RecordButton
+          tableId={config.tableId}
+          recordId={mode === 'edit' ? record?.recordId : undefined}
+          field={field}
+          title={cfg?.label || undefined}
+        />
+      );
+    }
 
     if (!canEdit(field)) {
       const text = formatCellValue(record?.fields?.[field.id], field);

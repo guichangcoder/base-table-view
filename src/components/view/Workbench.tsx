@@ -99,6 +99,7 @@ export function Workbench({ config }: Props) {
   const seqRef = useRef(0);
   const loadingMoreRef = useRef(false);
   const idsRef = useRef<Set<string>>(new Set());
+  const searchHintRef = useRef(false);
 
   const fieldMap = useMemo(() => new Map(fields.map((f) => [f.id, f])), [fields]);
 
@@ -310,6 +311,38 @@ export function Workbench({ config }: Props) {
     .map((id) => fieldMap.get(id))
     .filter((f): f is FieldMetaLite => !!f);
 
+  /**
+   * 按钮反馈：未配置或元信息未就绪时不能静默失效，
+   * 否则用户看到的是「灰色不可点 / 点了没反应」。
+   */
+  const toggleFilters = () => {
+    if (!filterFields.length) {
+      Toast.warning(
+        config.filterFieldIds.length
+          ? '筛选字段尚未加载完成，请点「刷新」后重试'
+          : '尚未配置筛选字段：请进入配置面板的「4. 筛选与搜索」勾选可用作筛选的字段',
+      );
+      return;
+    }
+    setFilterOpen((v) => !v);
+  };
+
+  const onKeywordChange = (v: string) => {
+    if (!config.searchFieldIds.length && v && !searchHintRef.current) {
+      searchHintRef.current = true;
+      Toast.warning('尚未配置搜索字段：请进入配置面板的「4. 筛选与搜索」勾选文本类字段');
+    }
+    setKeyword(v);
+  };
+
+  const handleRefresh = () => {
+    if (!fields.length) {
+      Toast.warning(metaError || '正在读取数据表结构，请稍后重试');
+      return;
+    }
+    void fetchPage(true);
+  };
+
   const renderFilterValue = (field: FieldMetaLite) => {
     const value = filterValues[field.id] ?? '';
     const op = filterOps[field.id] ?? defaultOperator(field.type);
@@ -402,17 +435,15 @@ export function Workbench({ config }: Props) {
 
         <div className="wb-toolbar">
           <Input
-            placeholder={config.searchFieldIds.length ? '搜索关键词' : '未配置搜索字段'}
-            disabled={!config.searchFieldIds.length}
+            placeholder={config.searchFieldIds.length ? '搜索关键词' : '未配置搜索字段（仍可输入）'}
             value={keyword}
             showClear
-            onChange={setKeyword}
+            onChange={onKeywordChange}
           />
           <Button
             theme={filterOpen ? 'solid' : 'light'}
             type={filterOpen ? 'primary' : 'tertiary'}
-            onClick={() => setFilterOpen((v) => !v)}
-            disabled={!filterFields.length}
+            onClick={toggleFilters}
           >
             筛选{activeFilters.length ? ` ${activeFilters.length}` : ''}
           </Button>
@@ -498,7 +529,7 @@ export function Workbench({ config }: Props) {
             {selected ? <Tag size="small" color="grey">…{selected.recordId.slice(-6)}</Tag> : null}
           </div>
           <div className="wb-main-actions">
-            <Button theme="borderless" onClick={() => fetchPage(true)} loading={loading}>
+            <Button theme="borderless" onClick={handleRefresh} loading={loading}>
               刷新
             </Button>
             {selected ? (
