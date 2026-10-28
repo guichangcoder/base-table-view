@@ -5,3 +5,7 @@ dist
 .DS_Store
 Thumbs.db
 *.log
+
+# 内部需求文档，仅保留在本地
+需求规格说明书.md
+原始需求.txt
