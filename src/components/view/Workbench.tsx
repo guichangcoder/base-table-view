@@ -5,6 +5,7 @@ import type { FieldMetaLite, FilterItem, PluginData, RecordRow } from '../../typ
 import { visibleFieldIds } from '../../utils/configOps';
 import { formatCellValue } from '../../utils/valueConverter';
 import { loadViewMeta } from '../../services/baseService';
+import { clearDraft, loadDraft } from '../../services/draftService';
 import {
   addRecord,
   getRecordById,
@@ -94,6 +95,10 @@ export function Workbench({ config }: Props) {
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<{ mode: 'create' | 'edit' } | null>(null);
   const [saving, setSaving] = useState(false);
+  /** 首屏列表就绪的数据表 id：草稿恢复要等列表就绪，避免恢复结果被首屏刷新覆盖 */
+  const [readyTableId, setReadyTableId] = useState('');
+  /** 草稿恢复按数据表只做一次，避免筛选/刷新时反复弹出表单 */
+  const restoreDoneRef = useRef('');
 
   // 并发护栏：请求序号用于丢弃过期响应；ids 集合用于跨页去重
   const seqRef = useRef(0);
@@ -178,6 +183,7 @@ export function Workbench({ config }: Props) {
     // 「加载更多」串行化：并发点两次会拿到同一游标，产生重复数据
     if (!reset && loadingMoreRef.current) return;
 
+    const tableId = config.tableId;
     const seq = ++seqRef.current;
     if (reset) {
       setLoading(true);
@@ -222,6 +228,7 @@ export function Workbench({ config }: Props) {
         setLoadingMore(false);
       } else if (seq === seqRef.current) {
         setLoading(false);
+        setReadyTableId(tableId);
       }
     }
   };
@@ -232,6 +239,49 @@ export function Workbench({ config }: Props) {
     void fetchPage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.tableId, fields, applied]);
+
+  // 5) 刷新后恢复上次保存的草稿：编辑态重新选中该记录，新建态直接打开新增表单
+  useEffect(() => {
+    if (!config.tableId || fields.length === 0 || readyTableId !== config.tableId) return;
+    if (restoreDoneRef.current === config.tableId) return;
+    restoreDoneRef.current = config.tableId;
+    const tableId = config.tableId;
+    const draft = loadDraft(tableId);
+    if (!draft) return;
+
+    if (draft.mode === 'create') {
+      setForm({ mode: 'create' });
+      return;
+    }
+    if (!draft.recordId) {
+      clearDraft(tableId);
+      return;
+    }
+
+    const recordId = draft.recordId;
+    const openEdit = () => {
+      setSelectedId(recordId);
+      setForm({ mode: 'edit' });
+    };
+    if (records.some((r) => r.recordId === recordId)) {
+      openEdit();
+      return;
+    }
+    // 记录不在当前列表（被筛选掉或未加载到）时单独取一次
+    getRecordById(tableId, recordId)
+      .then((row) => {
+        idsRef.current.add(recordId);
+        setRecords((prev) =>
+          prev.some((r) => r.recordId === recordId) ? prev : [row, ...prev],
+        );
+        openEdit();
+      })
+      .catch(() => {
+        // 记录已被删除：草稿失去归属，清掉避免下次继续弹出
+        clearDraft(tableId);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.tableId, fields, readyTableId]);
 
   const selected = records.find((r) => r.recordId === selectedId) ?? null;
 
@@ -278,6 +328,7 @@ export function Workbench({ config }: Props) {
     try {
       if (form.mode === 'create') {
         const newId = await addRecord(config.tableId, payload);
+        clearDraft(config.tableId);
         Toast.success('记录已新增');
         setForm(null);
         await refreshRecord(newId);
@@ -288,6 +339,7 @@ export function Workbench({ config }: Props) {
           return;
         }
         await updateRecord(config.tableId, recordId, payload);
+        clearDraft(config.tableId);
         Toast.success('记录已更新');
         setForm(null);
         await refreshRecord(recordId);

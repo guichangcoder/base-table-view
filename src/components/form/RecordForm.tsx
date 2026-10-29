@@ -13,6 +13,11 @@ import {
 } from '../../utils/valueConverter';
 import { fieldLabel, validateRequired } from '../../utils/validator';
 import { toneOf } from '../../utils/palette';
+import {
+  clearDraft,
+  loadDraft,
+  saveDraft,
+} from '../../services/draftService';
 import { typeLabel } from '../config/FieldSection';
 import { RecordButton } from '../view/RecordButton';
 
@@ -39,6 +44,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
   const [values, setValues] = useState<Record<string, FormValue>>({});
   const [missing, setMissing] = useState<Record<string, string>>({});
   const [users, setUsers] = useState<Record<string, UserCandidate[]>>({});
+  const [hasDraft, setHasDraft] = useState(false);
 
   const cfgMap = useMemo(() => new Map(config.fields.map((c) => [c.fieldId, c])), [config.fields]);
   const fieldMap = useMemo(() => new Map(fields.map((f) => [f.id, f])), [fields]);
@@ -62,7 +68,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
     [blocks, fieldMap],
   );
 
-  // 打开表单时按记录值初始化
+  // 打开表单时按记录值初始化；若本机存有对应草稿，则用草稿覆盖（刷新后回到刚才填写的位置）
   useEffect(() => {
     if (!open) return;
     const next: Record<string, FormValue> = {};
@@ -70,8 +76,20 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
       if (!canEdit(f)) return;
       next[f.id] = toFormValue(record?.fields?.[f.id], f);
     });
+    const draft = loadDraft(config.tableId ?? '');
+    const matched =
+      !!draft &&
+      draft.mode === mode &&
+      (mode === 'create' || (!!record && draft.recordId === record.recordId));
+    if (matched && draft) {
+      Object.entries(draft.values).forEach(([fieldId, v]) => {
+        // 只回填当前仍可编辑的字段，配置改动后的废弃字段直接忽略
+        if (fieldId in next) next[fieldId] = v;
+      });
+    }
     setValues(next);
     setMissing({});
+    setHasDraft(matched);
   }, [open, mode, record?.recordId, formFields]);
 
   // 人员字段候选值（取列内已有人员 + 当前用户）
@@ -102,6 +120,28 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
       delete next[fieldId];
       return next;
     });
+  };
+
+  const handleSaveDraft = () => {
+    if (!config.tableId) return;
+    const ok = saveDraft(config.tableId, {
+      mode,
+      recordId: mode === 'edit' ? record?.recordId : undefined,
+      values,
+      savedAt: Date.now(),
+    });
+    if (ok) {
+      setHasDraft(true);
+      Toast.success('草稿已保存，刷新页面后可继续填写');
+    } else {
+      Toast.warning('草稿保存失败：当前浏览器不允许使用本地存储');
+    }
+  };
+
+  const handleDiscardDraft = () => {
+    clearDraft(config.tableId ?? '');
+    setHasDraft(false);
+    Toast.info('草稿已删除');
   };
 
   const handleSubmit = () => {
@@ -314,8 +354,21 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
         </div>
 
         <footer className="form-foot">
+          {hasDraft ? (
+            <span className="cfg-hint" style={{ marginRight: 'auto' }}>
+              本机草稿 · 仅自己可见，未写入数据表
+            </span>
+          ) : null}
+          {hasDraft ? (
+            <Button theme="borderless" onClick={handleDiscardDraft} disabled={saving}>
+              删除草稿
+            </Button>
+          ) : null}
           <Button onClick={onCancel} disabled={saving}>
             取消
+          </Button>
+          <Button onClick={handleSaveDraft} disabled={saving}>
+            保存草稿
           </Button>
           <Button theme="solid" type="primary" loading={saving} onClick={handleSubmit}>
             {mode === 'create' ? '提交新增' : '保存修改'}
