@@ -144,8 +144,14 @@ export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props)
     setSaving(true);
     setError('');
     try {
-      const bytes = await saveConfig(config);
-      Toast.success(`配置已保存（${bytes} 字节）`);
+      const res = await saveConfig(config);
+      if (res.persisted === 'host') {
+        Toast.success(`配置已保存（${res.bytes} 字节），所有用户刷新后看到同一份配置`);
+      } else {
+        Toast.warning(
+          `已写入本机备份（${res.bytes} 字节），但当前不在多维表格应用模式内，其他用户看不到这份配置`,
+        );
+      }
       onSaved();
     } catch (e) {
       const msg = String((e as Error)?.message ?? e);

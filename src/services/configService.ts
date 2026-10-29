@@ -125,6 +125,14 @@ function isForeignConfig(parsed: PluginData, currentBaseId: string): boolean {
   return false;
 }
 
+/**
+ * 配置是否「可用」：连数据表、分组、字段都没有，说明这是一份残缺配置
+ * （旧版本写入、中途异常、宿主侧被清空）。此时不能采用，否则会呈现空白界面。
+ */
+function isUsableConfig(c: PluginData): boolean {
+  return !!c.tableId || c.groups.length > 0 || c.fields.length > 0;
+}
+
 async function readBridge(): Promise<unknown> {
   try {
     const v = await withTimeout(getBridge().getData(CONFIG_KEY));
@@ -187,13 +195,17 @@ export async function loadConfig(): Promise<LoadConfigResult> {
       }
       const custom = hostCfg?.customConfig ?? null;
       if (custom) {
-        const currentBaseId = await getBaseId();
         const parsed = hydrateConfig(custom);
-        if (isForeignConfig(parsed, currentBaseId)) {
-          droppedForeign = true;
+        if (!isUsableConfig(parsed)) {
+          console.warn('[configService] 宿主配置缺少数据表 / 分组 / 字段，按无效处理并回落到备份');
         } else {
-          await bindBaseIfNeeded(parsed);
-          return { config: parsed, source: 'dashboard', droppedForeign };
+          const currentBaseId = await getBaseId();
+          if (isForeignConfig(parsed, currentBaseId)) {
+            droppedForeign = true;
+          } else {
+            await bindBaseIfNeeded(parsed);
+            return { config: parsed, source: 'dashboard', droppedForeign };
+          }
         }
       }
     } catch (e) {
@@ -207,10 +219,12 @@ export async function loadConfig(): Promise<LoadConfigResult> {
   const bridgeData = await readBridge();
   if (bridgeData) {
     const parsed = hydrateConfig(bridgeData);
-    if (isForeignConfig(parsed, currentBaseId)) droppedForeign = true;
-    else {
-      await bindBaseIfNeeded(parsed);
-      return { config: parsed, source: 'bridge', droppedForeign };
+    if (isUsableConfig(parsed)) {
+      if (isForeignConfig(parsed, currentBaseId)) droppedForeign = true;
+      else {
+        await bindBaseIfNeeded(parsed);
+        return { config: parsed, source: 'bridge', droppedForeign };
+      }
     }
   }
 
@@ -218,11 +232,13 @@ export async function loadConfig(): Promise<LoadConfigResult> {
   const localData = readLocal(currentBaseId);
   if (localData) {
     const parsed = hydrateConfig(localData);
-    if (!isForeignConfig(parsed, currentBaseId)) {
-      await bindBaseIfNeeded(parsed);
-      return { config: parsed, source: 'local', droppedForeign };
+    if (isUsableConfig(parsed)) {
+      if (!isForeignConfig(parsed, currentBaseId)) {
+        await bindBaseIfNeeded(parsed);
+        return { config: parsed, source: 'local', droppedForeign };
+      }
+      droppedForeign = true;
     }
-    droppedForeign = true;
   }
 
   return { config: emptyConfig(), source: 'none', droppedForeign };
@@ -253,11 +269,20 @@ async function assertTablesInBase(config: PluginData): Promise<void> {
   }
 }
 
+export interface SaveResult {
+  bytes: number;
+  /**
+   * host：写入宿主配置，所有用户刷新后都能看到；
+   * local：仅写入本机备份（浏览器直开调试），其他人看不到，不能当作保存成功。
+   */
+  persisted: 'host' | 'local';
+}
+
 /**
  * 保存配置。真实宿主下失败会抛错（飞书据此关闭配置弹窗）；
- * 仅在明确非宿主环境（浏览器直开调试）时只写本地备份。
+ * 仅在明确非宿主环境（浏览器直开调试）时只写本地备份，并如实返回 persisted='local'。
  */
-export async function saveConfig(input: PluginData): Promise<number> {
+export async function saveConfig(input: PluginData): Promise<SaveResult> {
   const baseToken = getBaseToken();
   const baseId = await getBaseId();
 
@@ -279,7 +304,7 @@ export async function saveConfig(input: PluginData): Promise<number> {
   if (!isDashboardHost()) {
     await writeBackup(thin, baseId);
     console.info('[configService] 非宿主环境，仅写入本地备份，配置字节数:', bytes);
-    return bytes;
+    return { bytes, persisted: 'local' };
   }
 
   const MAX_ATTEMPTS = 3;
@@ -305,7 +330,7 @@ export async function saveConfig(input: PluginData): Promise<number> {
 
   await writeBackup(thin, baseId);
   console.info('[configService] 配置已保存，字节数:', bytes);
-  return bytes;
+  return { bytes, persisted: 'host' };
 }
 
 /** 宿主侧配置变更（切到 View 后宿主会推送） */

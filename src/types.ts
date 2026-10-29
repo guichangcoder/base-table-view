@@ -31,8 +31,6 @@ export interface GroupConfig {
   color: string;
   columns: 1 | 2 | 3;
   collapsed?: boolean;
-  /** 空值字段隐藏（否则显示「—」占位） */
-  hideEmpty?: boolean;
   fieldIds: string[];
 }
 
