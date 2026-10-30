@@ -151,9 +151,7 @@ function mapFieldMeta(m: any): FieldMetaLite {
     id: String(m.id),
     name: String(m.name ?? m.id),
     type,
-    options: Array.isArray(prop.options)
-      ? prop.options.map((o: any) => ({ id: String(o.id), name: String(o.name) }))
-      : undefined,
+    options: Array.isArray(prop.options) && prop.options.length ? mapOptions(prop.options) : undefined,
     linkTableId: prop.tableId ? String(prop.tableId) : undefined,
     isPrimary: !!m.isPrimary,
     editable: isEditableType(type),
@@ -177,6 +175,50 @@ export async function listFields(tableId: string): Promise<FieldMetaLite[]> {
   const fields = await readFields(table);
   fieldCache.set(cacheKey(tableId), { at: Date.now(), fields });
   return fields;
+}
+
+export interface SelectOptionLite {
+  id: string;
+  name: string;
+}
+
+function mapOptions(raw: unknown): SelectOptionLite[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((o: any) => ({
+      id: String(o?.id ?? o?.name ?? ''),
+      name: String(o?.name ?? o?.text ?? o?.id ?? ''),
+    }))
+    .filter((o) => !!o.id);
+}
+
+/**
+ * 单选 / 多选字段的选项。
+ *
+ * 元信息里的 property.options 并不总是完整：选项「引用其他数据表」时可能是空数组，
+ * 宿主也可能不下发 property。因此优先走字段级 getOptions()，失败再回落元信息。
+ */
+export async function listSelectOptions(
+  tableId: string,
+  fieldId: string,
+): Promise<SelectOptionLite[]> {
+  const table = await getTableCached(tableId);
+  try {
+    const field: any = await table.getFieldById(fieldId);
+    if (field && typeof field.getOptions === 'function') {
+      const list = mapOptions(await field.getOptions());
+      if (list.length) return list;
+    }
+  } catch (e) {
+    console.warn('[baseService] getOptions 读取失败，回落到字段元信息:', e);
+  }
+  try {
+    const meta: any = await table.getFieldMetaById(fieldId);
+    return mapOptions(meta?.property?.options);
+  } catch (e) {
+    console.warn('[baseService] getFieldMetaById 读取失败:', e);
+    return [];
+  }
 }
 
 /* ---------------------------------------------------------------- 宿主对象缓存

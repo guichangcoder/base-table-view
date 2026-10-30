@@ -3,7 +3,11 @@ import { Button, DatePicker, Input, InputNumber, Select, Switch, Tag, Toast } fr
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, PluginData, RecordRow } from '../../types';
 import { isButtonField, visibleFieldIds } from '../../utils/configOps';
-import { isEditableType } from '../../services/baseService';
+import {
+  isEditableType,
+  listSelectOptions,
+  type SelectOptionLite,
+} from '../../services/baseService';
 import { listUserCandidates, type UserCandidate } from '../../services/recordService';
 import {
   buildFieldValue,
@@ -45,6 +49,8 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
   const [missing, setMissing] = useState<Record<string, string>>({});
   const [users, setUsers] = useState<Record<string, UserCandidate[]>>({});
   const [hasDraft, setHasDraft] = useState(false);
+  /** 字段元信息里缺失的选项（如「引用其他数据表」的选项），打开表单时按字段补读 */
+  const [selectOptions, setSelectOptions] = useState<Record<string, SelectOptionLite[]>>({});
 
   const cfgMap = useMemo(() => new Map(config.fields.map((c) => [c.fieldId, c])), [config.fields]);
   const fieldMap = useMemo(() => new Map(fields.map((f) => [f.id, f])), [fields]);
@@ -91,6 +97,61 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
     setMissing({});
     setHasDraft(matched);
   }, [open, mode, record?.recordId, formFields]);
+
+  // 切换数据表时清掉上一张表的选项缓存
+  useEffect(() => {
+    setSelectOptions({});
+  }, [config.tableId]);
+
+  // 选项字段的选项在元信息里可能缺失（如「引用其他数据表」的选项），按字段补读
+  useEffect(() => {
+    if (!open || !config.tableId) return;
+    let alive = true;
+    formFields.forEach((f) => {
+      if (f.type !== FT.SingleSelect && f.type !== FT.MultiSelect) return;
+      if ((f.options?.length ?? 0) > 0 || selectOptions[f.id]) return;
+      listSelectOptions(config.tableId as string, f.id)
+        .then((list) => {
+          // 读空也记一笔，避免每次选项表变化都重复请求宿主
+          if (alive) setSelectOptions((prev) => ({ ...prev, [f.id]: list }));
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [open, config.tableId, formFields, selectOptions]);
+
+  // 选项在不同接口里可能以名称形态返回，统一按名称换成选项 id，保证下拉能正常选中
+  useEffect(() => {
+    if (!open) return;
+    setValues((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      formFields.forEach((f) => {
+        const list = f.options?.length ? f.options : selectOptions[f.id] ?? [];
+        if (!list.length) return;
+        const has = (v: string) => list.some((o) => o.id === v);
+        const idOf = (v: string) => list.find((o) => o.name === v)?.id;
+        const v = next[f.id];
+        if (f.type === FT.SingleSelect && typeof v === 'string' && v && !has(v)) {
+          const hit = idOf(v);
+          if (hit) {
+            next[f.id] = hit;
+            changed = true;
+          }
+        } else if (f.type === FT.MultiSelect && Array.isArray(v)) {
+          const mapped = v.map((x) => (has(x) ? x : idOf(x) ?? x));
+          if (mapped.some((x, i) => x !== v[i])) {
+            next[f.id] = mapped;
+            changed = true;
+          }
+        }
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, formFields, selectOptions]);
 
   // 人员字段候选值（取列内已有人员 + 当前用户）
   useEffect(() => {
@@ -169,6 +230,10 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
     onSubmit(payload);
   };
 
+  /** 选项列表：元信息优先，缺失时用补读结果 */
+  const optionsOf = (field: FieldMetaLite): SelectOptionLite[] =>
+    field.options?.length ? field.options : selectOptions[field.id] ?? [];
+
   const renderInput = (field: FieldMetaLite) => {
     const cfg = cfgMap.get(field.id);
     const v = values[field.id];
@@ -236,7 +301,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
             showClear
             filter
             style={{ width: '100%' }}
-            optionList={(field.options ?? []).map((o) => ({ label: o.name, value: o.id }))}
+            optionList={optionsOf(field).map((o) => ({ label: o.name, value: o.id }))}
             onChange={(val) => setValue(field.id, val ? String(val) : '')}
           />
         );
@@ -249,7 +314,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
             filter
             maxTagCount={4}
             style={{ width: '100%' }}
-            optionList={(field.options ?? []).map((o) => ({ label: o.name, value: o.id }))}
+            optionList={optionsOf(field).map((o) => ({ label: o.name, value: o.id }))}
             onChange={(val) => setValue(field.id, Array.isArray(val) ? val.map(String) : [])}
           />
         );
