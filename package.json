@@ -2,6 +2,7 @@
   "name": "base-table-view",
   "private": true,
   "version": "0.1.0",
+  "output": "dist",
   "type": "module",
   "scripts": {
     "dev": "vite",
