@@ -246,22 +246,27 @@ export function unassignField(config: PluginData, fieldId: string): PluginData {
   };
 }
 
-export function moveFieldInGroup(
+/**
+ * 拖拽排序：把字段放到分组内的指定「间隙」。
+ * gap 为原数组的插入间隙（0 ~ fieldIds.length），被拖字段自身的占位会自动扣除。
+ */
+export function reorderFieldInGroup(
   config: PluginData,
   groupId: string,
   fieldId: string,
-  dir: -1 | 1,
+  gap: number,
 ): PluginData {
   return {
     ...config,
     groups: config.groups.map((g) => {
       if (g.id !== groupId) return g;
-      const idx = g.fieldIds.indexOf(fieldId);
-      const to = idx + dir;
-      if (idx < 0 || to < 0 || to >= g.fieldIds.length) return g;
-      const fieldIds = [...g.fieldIds];
-      [fieldIds[idx], fieldIds[to]] = [fieldIds[to], fieldIds[idx]];
-      return { ...g, fieldIds };
+      const from = g.fieldIds.indexOf(fieldId);
+      if (from < 0) return g;
+      const rest = g.fieldIds.filter((id) => id !== fieldId);
+      const to = Math.max(0, Math.min(gap > from ? gap - 1 : gap, rest.length));
+      if (to === from) return g;
+      rest.splice(to, 0, fieldId);
+      return { ...g, fieldIds: rest };
     }),
   };
 }

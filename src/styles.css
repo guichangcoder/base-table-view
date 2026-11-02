@@ -437,8 +437,25 @@ p.cfg-hint {
 .group-fields {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+  padding: 4px;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.group-fields.is-drop-target {
+  background: var(--c-primary-weak);
+  border-color: rgba(51, 112, 255, 0.35);
+}
+
+.field-drop-line {
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--c-primary);
 }
 
 .field-chip {
@@ -451,6 +468,28 @@ p.cfg-hint {
   background: var(--c-card);
   border: 1px solid var(--c-border);
   border-radius: 14px;
+}
+
+.field-chip.draggable {
+  cursor: grab;
+  user-select: none;
+  transition: border-color 0.12s, box-shadow 0.12s, opacity 0.12s;
+}
+
+.field-chip.draggable:hover {
+  border-color: var(--c-primary);
+  box-shadow: 0 1px 4px rgba(31, 35, 41, 0.1);
+}
+
+.field-chip.dragging {
+  opacity: 0.35;
+  border-style: dashed;
+}
+
+.field-chip-grip {
+  color: var(--c-text-3);
+  font-size: 11px;
+  line-height: 1;
 }
 
 .field-chip.muted {
