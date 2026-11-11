@@ -24,6 +24,7 @@ import {
 } from '../../services/draftService';
 import { typeLabel } from '../config/FieldSection';
 import { RecordButton } from '../view/RecordButton';
+import { LinkFieldSelect } from './LinkFieldSelect';
 
 const FT = FieldType as any;
 
@@ -57,6 +58,10 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
 
   // 字段是否允许前端编辑：类型可编辑 且 配置未关闭「可编辑」
   const canEdit = (f: FieldMetaLite): boolean => isEditableType(f.type) && cfgMap.get(f.id)?.readonly !== true;
+
+  /** 关联字段的目标表 id：字段元信息优先，兜底取关联展示配置 */
+  const linkTableIdOf = (f: FieldMetaLite): string | undefined =>
+    f.linkTableId || config.links.find((l) => l.fieldId === f.id)?.tableId;
 
   const blocks = useMemo(
     () =>
@@ -220,7 +225,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
       if (mode === 'edit' && record && sameFormValue(values[f.id], toFormValue(record.fields?.[f.id], f))) {
         return;
       }
-      const built = buildFieldValue(f.type, values[f.id]);
+      const built = buildFieldValue(f.type, values[f.id], linkTableIdOf(f));
       if (built !== undefined) payload[f.id] = built;
     });
     if (mode === 'edit' && Object.keys(payload).length === 0) {
@@ -346,6 +351,28 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
             style={{ width: '100%' }}
             optionList={options.map((u) => ({ label: u.name, value: u.id }))}
             onChange={(val) => setValue(field.id, Array.isArray(val) ? val.map(String) : [])}
+          />
+        );
+      }
+      case FT.SingleLink:
+      case FT.DuplexLink: {
+        const targetTableId = linkTableIdOf(field);
+        if (!targetTableId) {
+          return (
+            <div className="form-readonly">
+              {formatCellValue(record?.fields?.[field.id], field) || '—'}
+              <Tag size="small" color="grey">
+                无法获取关联表
+              </Tag>
+            </div>
+          );
+        }
+        return (
+          <LinkFieldSelect
+            key={targetTableId}
+            tableId={targetTableId}
+            value={Array.isArray(v) ? v.map(String) : []}
+            onChange={(ids) => setValue(field.id, ids)}
           />
         );
       }

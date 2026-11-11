@@ -42,6 +42,8 @@ export const EDITABLE_TYPES = pick([
   'Currency',
   'Progress',
   'Rating',
+  'SingleLink',
+  'DuplexLink',
 ]);
 
 /** 文本类，可用于关键词搜索 */

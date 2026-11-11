@@ -4,7 +4,8 @@
  */
 import { FieldType } from '@lark-base-open/js-sdk';
 import { getBridge } from './appContext';
-import { getTableCached } from './baseService';
+import { getTableCached, listFieldsCached } from './baseService';
+import { formatCellValue } from '../utils/valueConverter';
 import type { FieldMetaLite, FilterItem, LoadedRecordPage, RecordRow } from '../types';
 
 const FT = FieldType as any;
@@ -303,4 +304,57 @@ export async function listUserCandidates(
   }
 
   return Array.from(map, ([id, name]) => ({ id, name }));
+}
+
+export interface LinkCandidate {
+  id: string;
+  name: string;
+}
+
+/** 关联表首列缓存：远程搜索每次都要取标题字段，避免重复请求元信息 */
+const primaryFieldCache = new Map<string, FieldMetaLite>();
+
+async function primaryFieldOf(tableId: string): Promise<FieldMetaLite | undefined> {
+  const cached = primaryFieldCache.get(tableId);
+  if (cached) return cached;
+  const fields = await listFieldsCached(tableId);
+  const primary = fields.find((f) => f.isPrimary) ?? fields[0];
+  if (primary) primaryFieldCache.set(tableId, primary);
+  return primary;
+}
+
+const LINK_CANDIDATE_LIMIT = 50;
+
+/**
+ * 关联字段候选记录：用关联表首列作为展示文本。
+ * - 传 recordIds：按 id 回读（编辑态回显已关联记录）
+ * - 传 keyword：服务端模糊搜索
+ * - 都不传：返回前 N 条候选
+ */
+export async function listLinkCandidates(
+  tableId: string,
+  options: { keyword?: string; recordIds?: string[]; limit?: number } = {},
+): Promise<LinkCandidate[]> {
+  if (!tableId) return [];
+  const primary = await primaryFieldOf(tableId);
+  if (!primary) return [];
+
+  const toCandidates = (rows: RecordRow[]): LinkCandidate[] =>
+    rows
+      .map((r) => ({
+        id: r.recordId,
+        name: formatCellValue(r.fields[primary.id], primary) || r.recordId,
+      }))
+      .filter((c) => !!c.id);
+
+  const ids = (options.recordIds ?? []).filter(Boolean);
+  if (ids.length) return toCandidates(await getRecordsByIds(tableId, ids));
+
+  const res = await listRecords(tableId, {
+    pageSize: Math.min(options.limit ?? LINK_CANDIDATE_LIMIT, MAX_PAGE_SIZE),
+    keyword: options.keyword,
+    searchFieldIds: [primary.id],
+    fields: [primary],
+  });
+  return toCandidates(res.records);
 }

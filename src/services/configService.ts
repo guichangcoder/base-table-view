@@ -26,7 +26,8 @@ export type ConfigSource = 'dashboard' | 'bridge' | 'local' | 'none';
 
 const CONFIG_KEY = 'bitable-record-view-plugin:config';
 const LOCAL_PREFIX = 'bitable-record-view-plugin:backup';
-const MAX_CUSTOM_CONFIG_BYTES = 10240;
+/** customConfig 字节上限（宿主硬约束） */
+export const MAX_CUSTOM_CONFIG_BYTES = 10240;
 const HOST_CALL_TIMEOUT = 3000;
 
 /** 给宿主调用加超时，避免浏览器直开时 SDK Promise 永不 resolve */

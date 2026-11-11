@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Banner, Button, Modal, Select, Spin, Tag, Toast } from '@douyinfe/semi-ui';
 import { emptyConfig, type FieldMetaLite, type PluginData, type TableMetaLite } from '../../types';
 import { getBase, getBaseName, getBaseToken, selectBase } from '../../services/appContext';
 import { listFields, listTables } from '../../services/baseService';
-import { saveConfig, type ConfigSource } from '../../services/configService';
+import { MAX_CUSTOM_CONFIG_BYTES, saveConfig, type ConfigSource } from '../../services/configService';
+import { estimateConfigBytes, serializeConfig } from '../../services/configSize';
 import { syncConfig } from '../../utils/configOps';
 import { BasePicker } from './BasePicker';
 import { SettingsSection } from './SettingsSection';
@@ -164,6 +165,18 @@ export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props)
 
   const shownFields = config.groups.reduce((n, g) => n + g.fieldIds.length, 0);
 
+  // 实时估算落盘体积：与 saveConfig 同一套瘦身规则，提前暴露 10240 字节上限风险。
+  // saveConfig 会把 baseToken 与 baseId 一并落盘（无 token 时 baseId 取 token），这里同口径计入，避免低估。
+  const persistedBaseId = config.baseId || baseToken;
+  const configBytes = useMemo(
+    () => estimateConfigBytes(serializeConfig({ ...config, baseToken, baseId: persistedBaseId })),
+    [config, baseToken, persistedBaseId],
+  );
+  const sizeRatio = configBytes / MAX_CUSTOM_CONFIG_BYTES;
+  const sizePercent = Math.round(sizeRatio * 100);
+  const sizeKb = (configBytes / 1024).toFixed(1);
+  const sizeColor = sizeRatio >= 1 ? 'red' : sizeRatio >= 0.8 ? 'orange' : 'green';
+
   return (
     <div className="cfg">
       <header className="cfg-header">
@@ -174,6 +187,9 @@ export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props)
           </p>
         </div>
         <div className="cfg-header-actions">
+          <Tag color={sizeColor} size="large">
+            配置体积 {sizeKb} KB / 10 KB（{sizePercent}%）
+          </Tag>
           <Tag color={source === 'dashboard' ? 'green' : 'grey'} size="large">
             {SOURCE_LABEL[source]}
           </Tag>
@@ -194,6 +210,24 @@ export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props)
 
       {error ? (
         <Banner type="danger" title="操作失败" description={error} className="cfg-banner" closeIcon={null} />
+      ) : null}
+
+      {sizeRatio >= 0.8 ? (
+        <Banner
+          type={sizeRatio >= 1 ? 'danger' : 'warning'}
+          title={
+            sizeRatio >= 1
+              ? `配置体积已超过 ${MAX_CUSTOM_CONFIG_BYTES} 字节上限`
+              : '配置体积接近上限'
+          }
+          description={
+            sizeRatio >= 1
+              ? `当前 ${configBytes} 字节（${sizePercent}%），保存会被拒绝。请精简分组数量、字段规则或关联展示配置。`
+              : `当前 ${sizeKb} KB（${sizePercent}%），超过上限后该插件将无法保存配置。建议精简分组或字段配置。`
+          }
+          className="cfg-banner"
+          closeIcon={null}
+        />
       ) : null}
 
       <section className="cfg-card">

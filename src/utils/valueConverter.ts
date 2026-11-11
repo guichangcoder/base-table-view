@@ -86,6 +86,19 @@ function linksToText(value: unknown): string {
   return '';
 }
 
+/** 关联单元格 → 关联记录 id 列表（兼容 recordIds / 数组 / 单值） */
+function linkIds(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.flatMap(linkIds);
+  if (typeof value === 'string') return value ? [value] : [];
+  if (isObject(value)) {
+    const ids = value.recordIds ?? value.record_ids ?? value.recordId ?? value.id;
+    if (Array.isArray(ids)) return ids.map(String).filter(Boolean);
+    if (typeof ids === 'string' && ids) return [ids];
+  }
+  return [];
+}
+
 function locationToText(value: unknown): string {
   if (typeof value === 'string') return value;
   if (isObject(value)) return String(value.fullAddress ?? value.full_address ?? value.name ?? value.address ?? '');
@@ -172,6 +185,7 @@ export function toFormValue(value: unknown, field: FieldMetaLite): FormValue {
   if (value === null || value === undefined) {
     if (type === FT.Checkbox) return false;
     if (type === FT.MultiSelect || type === FT.User) return [];
+    if (type === FT.SingleLink || type === FT.DuplexLink) return [];
     return '';
   }
   switch (type) {
@@ -201,6 +215,9 @@ export function toFormValue(value: unknown, field: FieldMetaLite): FormValue {
       const arr = Array.isArray(value) ? value : [value];
       return arr.map((u) => (isObject(u) ? String(u.id ?? '') : String(u))).filter(Boolean);
     }
+    case FT.SingleLink:
+    case FT.DuplexLink:
+      return linkIds(value);
     default:
       return formatCellValue(value, field);
   }
@@ -208,9 +225,13 @@ export function toFormValue(value: unknown, field: FieldMetaLite): FormValue {
 
 /**
  * 表单值 → 写入值。返回 undefined 表示该字段不参与本次写入。
- * 注意：关联 / 附件一期只读，不在此处构建写入值。
+ * 关联字段写入开放值 `{ recordIds, tableId }`，tableId 由字段元信息/关联展示配置提供。
  */
-export function buildFieldValue(type: number, raw: unknown): unknown | undefined {
+export function buildFieldValue(
+  type: number,
+  raw: unknown,
+  linkTableId?: string,
+): unknown | undefined {
   switch (type) {
     case FT.Text:
     case FT.Phone:
@@ -245,6 +266,13 @@ export function buildFieldValue(type: number, raw: unknown): unknown | undefined
     case FT.User: {
       const ids = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string' && !!x) : [];
       return ids.map((id) => ({ id }));
+    }
+    case FT.SingleLink:
+    case FT.DuplexLink: {
+      const ids = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string' && !!x) : [];
+      const out: Record<string, unknown> = { recordIds: ids };
+      if (linkTableId) out.tableId = linkTableId;
+      return out;
     }
     default:
       return undefined;
