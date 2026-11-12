@@ -12,6 +12,8 @@ interface Props {
 
 const SEARCH_DEBOUNCE = 300;
 const OPTION_LIMIT = 50;
+/** 关联记录取不到首列文本时的展示占位，任何情况下都不向用户暴露记录 ID */
+const FALLBACK_LABEL = '未命名记录';
 
 /**
  * 关联字段编辑器：候选记录取自关联表首列，支持远程搜索。
@@ -30,7 +32,7 @@ export function LinkFieldSelect({ tableId, value, onChange, disabled }: Props) {
     setLabels((prev) => {
       const next = { ...prev };
       list.forEach((c) => {
-        next[c.id] = c.name;
+        next[c.id] = c.name || FALLBACK_LABEL;
       });
       return next;
     });
@@ -76,7 +78,7 @@ export function LinkFieldSelect({ tableId, value, onChange, disabled }: Props) {
         setLabels((prev) => {
           const next = { ...prev };
           list.forEach((c) => {
-            next[c.id] = c.name;
+            next[c.id] = c.name || FALLBACK_LABEL;
           });
           return next;
         });
@@ -91,12 +93,12 @@ export function LinkFieldSelect({ tableId, value, onChange, disabled }: Props) {
 
   const options = useMemo(() => {
     const map = new Map<string, string>();
-    candidates.forEach((c) => map.set(c.id, c.name));
+    candidates.forEach((c) => map.set(c.id, c.name || FALLBACK_LABEL));
     Object.entries(labels).forEach(([id, name]) => {
-      if (!map.has(id)) map.set(id, name);
+      if (!map.has(id)) map.set(id, name || FALLBACK_LABEL);
     });
     value.forEach((id) => {
-      if (!map.has(id)) map.set(id, id);
+      if (!map.has(id)) map.set(id, FALLBACK_LABEL);
     });
     return Array.from(map, ([id, name]) => ({ value: id, label: name }));
   }, [candidates, labels, value]);

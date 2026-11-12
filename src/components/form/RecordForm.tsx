@@ -33,6 +33,15 @@ function sameFormValue(a: FormValue, b: FormValue): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
+/** 关联字段排在本组最前，其余字段保持原有顺序 */
+function linkFirst(ids: string[], fieldMap: Map<string, FieldMetaLite>): string[] {
+  const isLink = (id: string) => {
+    const t = fieldMap.get(id)?.type;
+    return t === FT.SingleLink || t === FT.DuplexLink;
+  };
+  return [...ids.filter(isLink), ...ids.filter((id) => !isLink(id))];
+}
+
 interface Props {
   open: boolean;
   mode: 'create' | 'edit';
@@ -68,7 +77,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
       config.groups
         .map((group) => ({
           group,
-          ids: visibleFieldIds(config, group).filter((id) => fieldMap.has(id)),
+          ids: linkFirst(visibleFieldIds(config, group).filter((id) => fieldMap.has(id)), fieldMap),
         }))
         .filter((b) => b.ids.length > 0),
     [config, fieldMap],
@@ -108,13 +117,13 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
     setSelectOptions({});
   }, [config.tableId]);
 
-  // 选项字段的选项在元信息里可能缺失（如「引用其他数据表」的选项），按字段补读
+  // 单选/多选的选项统一取字段原生配置：元信息里的 options 可能不全（如「引用其他数据表」），按字段补读
   useEffect(() => {
     if (!open || !config.tableId) return;
     let alive = true;
     formFields.forEach((f) => {
       if (f.type !== FT.SingleSelect && f.type !== FT.MultiSelect) return;
-      if ((f.options?.length ?? 0) > 0 || selectOptions[f.id]) return;
+      if (selectOptions[f.id]) return;
       listSelectOptions(config.tableId as string, f.id)
         .then((list) => {
           // 读空也记一笔，避免每次选项表变化都重复请求宿主
@@ -134,7 +143,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
       let changed = false;
       const next = { ...prev };
       formFields.forEach((f) => {
-        const list = f.options?.length ? f.options : selectOptions[f.id] ?? [];
+        const list = selectOptions[f.id]?.length ? selectOptions[f.id] : f.options ?? [];
         if (!list.length) return;
         const has = (v: string) => list.some((o) => o.id === v);
         const idOf = (v: string) => list.find((o) => o.name === v)?.id;
@@ -235,9 +244,11 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
     onSubmit(payload);
   };
 
-  /** 选项列表：元信息优先，缺失时用补读结果 */
-  const optionsOf = (field: FieldMetaLite): SelectOptionLite[] =>
-    field.options?.length ? field.options : selectOptions[field.id] ?? [];
+  /** 选项列表：优先字段原生选项（getOptions），读不到时回落元信息 */
+  const optionsOf = (field: FieldMetaLite): SelectOptionLite[] => {
+    const native = selectOptions[field.id];
+    return native?.length ? native : field.options ?? [];
+  };
 
   const renderInput = (field: FieldMetaLite) => {
     const cfg = cfgMap.get(field.id);
@@ -389,8 +400,14 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
   };
 
   return (
-    <div className="form-mask" onMouseDown={onCancel}>
-      <div className="form-panel" onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      className="form-mask"
+      onMouseDown={(e) => {
+        // 仅点击遮罩空白处才关闭：面板内不拦截事件，保证下拉「点击别处即收起」
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div className="form-panel">
         <header className="form-head">
           <div>
             <h2>{mode === 'create' ? '新增记录' : '编辑记录'}</h2>

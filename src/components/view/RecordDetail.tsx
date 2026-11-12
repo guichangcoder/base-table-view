@@ -68,6 +68,20 @@ export function RecordDetail({ config, fields, record }: Props) {
               <span className="group-block-count">{plainIds.length + linkIds.length} 个字段</span>
             </header>
 
+            {linkIds.map((id) => {
+              const field = fieldMap.get(id);
+              const link = linkMap.get(id);
+              if (!field || !link) return null;
+              return (
+                <LinkBlock
+                  key={id}
+                  link={link}
+                  value={record.fields[id]}
+                  fieldName={fieldLabel(field, cfgMap.get(id))}
+                />
+              );
+            })}
+
             {plainIds.length ? (
               <div className={`field-grid cols-${group.columns}`}>
                 {plainIds.map((id) => {
@@ -106,20 +120,6 @@ export function RecordDetail({ config, fields, record }: Props) {
                 })}
               </div>
             ) : null}
-
-            {linkIds.map((id) => {
-              const field = fieldMap.get(id);
-              const link = linkMap.get(id);
-              if (!field || !link) return null;
-              return (
-                <LinkBlock
-                  key={id}
-                  link={link}
-                  value={record.fields[id]}
-                  fieldName={fieldLabel(field, cfgMap.get(id))}
-                />
-              );
-            })}
           </section>
         );
       })}

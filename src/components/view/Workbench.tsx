@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Banner, Button, DatePicker, Empty, Input, Select, Spin, Tag, Toast } from '@douyinfe/semi-ui';
+import { Banner, Button, DatePicker, Empty, Input, Select, Spin, Toast } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, FilterItem, PluginData, RecordRow } from '../../types';
 import { visibleFieldIds } from '../../utils/configOps';
 import { formatCellValue } from '../../utils/valueConverter';
-import { loadViewMeta } from '../../services/baseService';
+import { loadViewMeta, listSelectOptions, type SelectOptionLite } from '../../services/baseService';
 import { clearDraft, loadDraft } from '../../services/draftService';
 import {
   addRecord,
@@ -91,6 +91,8 @@ export function Workbench({ config }: Props) {
   });
   const [filterOpen, setFilterOpen] = useState(false);
   const [userOptions, setUserOptions] = useState<Record<string, UserCandidate[]>>({});
+  /** 单选/多选筛选项的原生选项（元信息可能不全，按字段补读） */
+  const [selectOptions, setSelectOptions] = useState<Record<string, SelectOptionLite[]>>({});
 
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<{ mode: 'create' | 'edit' } | null>(null);
@@ -146,6 +148,25 @@ export function Workbench({ config }: Props) {
       listUserCandidates(config.tableId as string, id)
         .then((list) => {
           if (alive) setUserOptions((prev) => ({ ...prev, [id]: list }));
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.tableId, config.filterFieldIds.join(','), fields]);
+
+  // 3) 筛选字段里单选/多选的原生选项
+  useEffect(() => {
+    if (!config.tableId) return;
+    let alive = true;
+    config.filterFieldIds.forEach((id) => {
+      const type = fieldMap.get(id)?.type;
+      if ((type !== FT.SingleSelect && type !== FT.MultiSelect) || selectOptions[id]) return;
+      listSelectOptions(config.tableId as string, id)
+        .then((list) => {
+          if (alive) setSelectOptions((prev) => ({ ...prev, [id]: list }));
         })
         .catch(() => undefined);
     });
@@ -417,6 +438,8 @@ export function Workbench({ config }: Props) {
     }
 
     if (field.type === FT.SingleSelect || field.type === FT.MultiSelect) {
+      const native = selectOptions[field.id];
+      const options = native?.length ? native : field.options ?? [];
       return (
         <Select
           size="small"
@@ -425,7 +448,7 @@ export function Workbench({ config }: Props) {
           showClear
           filter
           style={{ width: '100%' }}
-          optionList={(field.options ?? []).map((o) => ({ label: o.name, value: o.id }))}
+          optionList={options.map((o) => ({ label: o.name, value: o.id }))}
           onChange={(v) => setFilterValues((prev) => ({ ...prev, [field.id]: v ? String(v) : '' }))}
         />
       );
@@ -578,7 +601,6 @@ export function Workbench({ config }: Props) {
         <div className="wb-main-head">
           <div className="wb-main-title">
             <h2>{selected ? titleOf(selected) : '记录详情'}</h2>
-            {selected ? <Tag size="small" color="grey">…{selected.recordId.slice(-6)}</Tag> : null}
           </div>
           <div className="wb-main-actions">
             <Button theme="borderless" onClick={handleRefresh} loading={loading}>
