@@ -200,8 +200,11 @@ export function toFormValue(value: unknown, field: FieldMetaLite): FormValue {
     case FT.Rating:
       return typeof value === 'number' ? value : Number(value) || '';
     case FT.SingleSelect: {
-      if (isObject(value)) return String(value.id ?? '');
-      return String(value);
+      // 查找引用可能返回数组：单选目标取第一个值
+      const v = Array.isArray(value) ? value[0] : value;
+      if (v === null || v === undefined) return '';
+      if (isObject(v)) return String(v.id ?? v.text ?? '');
+      return String(v);
     }
     case FT.MultiSelect: {
       const arr = Array.isArray(value) ? value : [value];

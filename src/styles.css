@@ -1124,21 +1124,23 @@ p.cfg-hint {
   border-radius: 6px;
 }
 
-.link-table-wrap {
+/* --- 主子表统一横向表格：字段做列、记录做行（浏览页关联表与单据页子表共用） --- */
+
+.sub-table-wrap {
   overflow-x: auto;
   background: rgba(255, 255, 255, 0.85);
   border: 1px solid var(--c-border-weak);
   border-radius: 6px;
 }
 
-.link-table {
+.sub-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
 }
 
-.link-table th,
-.link-table td {
+.sub-table th,
+.sub-table td {
   max-width: 220px;
   padding: 7px 10px;
   overflow: hidden;
@@ -1148,23 +1150,45 @@ p.cfg-hint {
   border-bottom: 1px solid var(--c-border-weak);
 }
 
-.link-table th {
+.sub-table th {
   font-weight: 500;
   color: var(--c-text-2);
   background: #f7f8fa;
 }
 
-.link-table tbody tr:last-child td {
+.sub-table tbody tr:last-child td {
   border-bottom: none;
 }
 
-.link-table tbody tr:hover td {
+.sub-table tbody tr:hover td {
   background: #fafbfc;
 }
 
-.link-col-index {
+.sub-table td.missing {
+  background: rgba(216, 57, 49, 0.05);
+}
+
+.sub-table td.missing .semi-input-wrapper,
+.sub-table td.missing .semi-select,
+.sub-table td.missing .semi-input-number {
+  border-color: var(--c-danger);
+}
+
+.sub-col-index {
   width: 40px;
   color: var(--c-text-3);
+  text-align: center !important;
+}
+
+.sub-col-op {
+  width: 72px;
+  white-space: nowrap;
+  text-align: center !important;
+}
+
+.sub-table-empty {
+  padding: 14px 10px !important;
+  color: var(--c-danger);
   text-align: center !important;
 }
 
@@ -1366,31 +1390,39 @@ p.cfg-hint {
 }
 
 .doc-sub-head-bar h4 {
+  margin-right: auto;
   font-size: 13px;
   line-height: 18px;
   color: var(--c-text-2);
 }
 
-.doc-sub-row {
-  padding: 12px 0 4px;
-  border-top: 1px dashed var(--c-border-weak);
+.doc-sub-head-bar .cfg-hint {
+  margin-bottom: 0;
 }
 
-.doc-sub-row:first-of-type {
-  padding-top: 0;
-  border-top: none;
+/* 单据页子表：单元格容纳录入控件，字段多时横向滚动 */
+.doc-sub-table th,
+.doc-sub-table td {
+  min-width: 176px;
+  max-width: none;
+  overflow: visible;
+  vertical-align: top;
+  white-space: normal;
+  text-overflow: clip;
 }
 
-.doc-sub-head {
+.doc-sub-table .sub-col-index,
+.doc-sub-table .sub-col-op {
+  min-width: 0;
+}
+
+.sub-readonly {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.doc-sub-title {
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 8px;
   font-size: 12px;
-  color: var(--c-text-2);
 }
 
 /* ---------------------------------------------------------------- 单据配置 */

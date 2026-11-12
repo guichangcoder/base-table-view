@@ -274,8 +274,9 @@ export function Workbench({ config }: Props) {
     const draft = loadDraft(tableId);
     if (!draft) return;
 
+    // 新增记录入口已取消：新建态草稿不再恢复，直接清理
     if (draft.mode === 'create') {
-      setForm({ mode: 'create' });
+      clearDraft(tableId);
       return;
     }
     if (!draft.recordId) {
@@ -614,13 +615,10 @@ export function Workbench({ config }: Props) {
               <Button onClick={() => setForm({ mode: 'edit' })}>编辑</Button>
             ) : null}
             {docReady(config.doc) ? (
-              <Button theme="light" onClick={() => setDocOpen(true)}>
+              <Button theme="solid" type="primary" onClick={() => setDocOpen(true)}>
                 新增{config.doc?.name?.trim() || '单据'}
               </Button>
             ) : null}
-            <Button theme="solid" type="primary" onClick={() => setForm({ mode: 'create' })}>
-              新增记录
-            </Button>
           </div>
         </div>
 

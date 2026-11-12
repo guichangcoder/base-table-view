@@ -245,6 +245,16 @@ export function collectAuto(
   return out;
 }
 
+/**
+ * 多值单元格拆成单值列表：查找引用 / 多选返回数组，可能嵌套。
+ * 空值返回空数组；单值返回单元素数组。
+ */
+export function splitCellValues(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw.flatMap((v) => splitCellValues(v));
+  if (isEmptyValue(raw)) return [];
+  return [raw];
+}
+
 /** 子表可填字段：去掉指向主表的关联字段与其它关联字段 */
 export function subTargets(sub: DocSubConfig | DocSubMeta, fields: FieldMetaLite[]): FieldMetaLite[] {
   return fields.filter(

@@ -9,7 +9,7 @@ import type {
   TableMetaLite,
 } from '../../types';
 import { emptyDocConfig, updateDoc } from '../../utils/configOps';
-import { isEditableType, isLinkType, listFields } from '../../services/baseService';
+import { isEditableType, isLinkType, isReadonlyType, listFields } from '../../services/baseService';
 
 interface Props {
   config: PluginData;
@@ -54,8 +54,20 @@ function currentSource(mapping: DocMapping | undefined, targetId: string): strin
   return item.from ? `${item.src}|${item.from}` : NONE;
 }
 
-/** 可带出的来源字段：非关联、可编辑类型 */
+/** 可带出的来源字段：含查找引用 / 公式等只读字段（值可被引用），排除关联与按钮 */
 function sourceCandidates(list: FieldMetaLite[], excludeId?: string): FieldMetaLite[] {
+  return list.filter(
+    (f) =>
+      f.id !== excludeId &&
+      !f.unsupported &&
+      !f.isButton &&
+      !isLinkType(f.type) &&
+      (isEditableType(f.type) || isReadonlyType(f.type)),
+  );
+}
+
+/** 可写入的带出目标字段：仅可编辑、非关联 */
+function targetCandidates(list: FieldMetaLite[], excludeId?: string): FieldMetaLite[] {
   return list.filter(
     (f) =>
       f.id !== excludeId && !f.unsupported && isEditableType(f.type) && !isLinkType(f.type),
@@ -165,10 +177,7 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
   const removeSub = (index: number) => patchSubs(subs.filter((_, i) => i !== index));
 
   /** 可被带出的主表目标字段：去掉合同关联字段本身与其它关联字段 */
-  const mainTargets = fields.filter(
-    (f) =>
-      f.id !== doc.contractFieldId && !f.unsupported && isEditableType(f.type) && !isLinkType(f.type),
-  );
+  const mainTargets = targetCandidates(fields, doc.contractFieldId);
   const mainSources = sourceCandidates(fields, doc.contractFieldId);
   const hop1Sources = sourceCandidates(contractFields);
   const hop2Sources = sourceCandidates(customerFields);
@@ -204,7 +213,10 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
               },
               { label: '不带出', value: NONE },
               ...groups.flatMap((g) =>
-                g.fields.map((f) => ({ label: `${g.label}：${f.name}`, value: `${g.src}|${f.id}` })),
+                g.fields.map((f) => ({
+                  label: `${g.label}：${f.name}${isReadonlyType(f.type) ? '（只读）' : ''}`,
+                  value: `${g.src}|${f.id}`,
+                })),
               ),
             ]}
             onChange={(v) => onMapping(setMapping(mapping, target.id, String(v ?? AUTO), defaultSrc))}
@@ -224,7 +236,8 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
       </div>
       <p className="cfg-hint">
         启用后浏览页出现「新增{config.doc?.name?.trim() || '单据'}」入口：选择合同后，合同字段按映射自动带出到主表记录并置为只读；
-        可配置多张子表，每张子表自动新增 1 行，字段可按配置从主表 / 合同 / 客户带出，其余字段由用户录入。
+        子表以「字段做列、记录做行」的表格录入，字段可按配置从主表 / 合同 / 客户带出（可选查找引用等只读字段）。
+        来源为多值（查找引用 / 多选）且目标为单选时，每个值生成一行（如合同产品线）。
         保存时先写主表再逐张写子表，任一步失败会回滚本次全部新增。
       </p>
 
@@ -302,7 +315,7 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
           <div className="doc-sub-cfg-list">
             <div className="doc-map-head">
               <h3>子表（可多张）</h3>
-              <span className="cfg-hint">每张子表在新增页自动新增 1 行，字段来源可逐项配置</span>
+              <span className="cfg-hint">每张子表在新增页按表格录入且至少保留 1 行，字段来源可逐项配置</span>
             </div>
             {subs.map((sub, idx) => {
               const subFields = subFieldMap[sub.tableId] ?? [];
@@ -316,7 +329,7 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
               const linkCandidates = subFields.filter(
                 (f) => isLinkType(f.type) && (!f.linkTableId || f.linkTableId === config.tableId),
               );
-              const targets = sourceCandidates(subFields, sub.linkFieldId);
+              const targets = targetCandidates(subFields, sub.linkFieldId);
               const tableName = tables.find((t) => t.id === sub.tableId)?.name ?? '未选择';
               return (
                 <div className="doc-sub-cfg" key={sub.tableId || `sub-${idx}`}>
@@ -385,7 +398,8 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
                     <div className="doc-map-head">
                       <h3>带出字段</h3>
                       <span className="cfg-hint">
-                        默认按主表字段同名自动带出，可逐项改为主表 / 合同 / 客户字段或不带出
+                        默认按主表字段同名自动带出，可逐项改为主表 / 合同 / 客户字段（含查找引用等只读字段）或不带出；
+                        多值来源配到单选目标时，每个值生成一行
                       </span>
                     </div>
                     {!sub.tableId ? (

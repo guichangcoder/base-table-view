@@ -81,11 +81,11 @@ export function LinkBlock({ link, value, fieldName }: Props) {
       ) : ids.length === 0 ? (
         <div className="link-block-empty">无关联记录</div>
       ) : (
-        <div className="link-table-wrap">
-          <table className="link-table">
+        <div className="sub-table-wrap">
+          <table className="sub-table">
             <thead>
               <tr>
-                <th className="link-col-index">#</th>
+                <th className="sub-col-index">#</th>
                 {cols.map((c) => (
                   <th key={c.id}>{c.name}</th>
                 ))}
@@ -94,7 +94,7 @@ export function LinkBlock({ link, value, fieldName }: Props) {
             <tbody>
               {rows.map((row, i) => (
                 <tr key={row.recordId}>
-                  <td className="link-col-index">{i + 1}</td>
+                  <td className="sub-col-index">{i + 1}</td>
                   {cols.map((c) => {
                     const text = formatCellValue(row.fields[c.id], c);
                     return (

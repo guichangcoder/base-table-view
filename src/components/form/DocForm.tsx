@@ -15,6 +15,7 @@ import {
 import {
   isEditableType,
   isLinkType,
+  isReadonlyType,
   listSelectOptions,
   type SelectOptionLite,
 } from '../../services/baseService';
@@ -30,6 +31,7 @@ import {
   fetchDocFillData,
   loadDocMeta,
   resolveMapping,
+  splitCellValues,
   subTargets,
   type DocMeta,
   type DocSourceData,
@@ -47,6 +49,8 @@ interface SubRowState {
   key: string;
   /** 用户填写的值 */
   values: Record<string, FormValue>;
+  /** 多值来源拆分后按行带入的只读值（如合同产品线：一个值一行） */
+  preset?: Record<string, FormValue>;
 }
 
 interface MainRowState {
@@ -126,6 +130,20 @@ function displayText(
   return formatCellValue(value, field) || String(value);
 }
 
+/** 多值来源中的单个值 → 目标单选字段可用值（优先按名称匹配目标选项） */
+function cellItem(raw: unknown): { id: string; name: string } {
+  if (raw === null || raw === undefined) return { id: '', name: '' };
+  let id = '';
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    if (obj.id !== undefined) id = String(obj.id);
+  } else if (typeof raw === 'string' || typeof raw === 'number') {
+    id = String(raw);
+  }
+  const name = formatCellValue(raw) || id;
+  return { id: id || name, name };
+}
+
 function sourceTag(src: DocSource): string {
   if (src === 'main') return '主表带出';
   if (src === 'hop1') return '合同带出';
@@ -179,15 +197,16 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
     return m;
   }, [meta]);
 
-  /** 可作为「主表来源」的字段：与配置面板口径一致（去掉合同关联字段与关联字段） */
+  /** 可作为「主表来源」的字段：含查找引用等只读字段（值可被引用），口径与配置面板一致 */
   const mainSourceFields = useMemo(
     () =>
       fields.filter(
         (f) =>
           f.id !== doc?.contractFieldId &&
           !f.unsupported &&
-          isEditableType(f.type) &&
-          !isLinkType(f.type),
+          !f.isButton &&
+          !isLinkType(f.type) &&
+          (isEditableType(f.type) || isReadonlyType(f.type)),
       ),
     [fields, doc?.contractFieldId],
   );
@@ -376,11 +395,60 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
   const userOptionsOf = (tableId: string | undefined, field: FieldMetaLite): UserCandidate[] =>
     tableId ? users[`${tableId}:${field.id}`] ?? [] : [];
 
-  /** E1：选择合同后按配置带出主表字段，并为每张子表强制新增 1 行 */
+  /** 子表字段有效值：多值拆分带入优先，其次映射带出，最后取用户输入 */
+  const subFieldValue = (
+    row: MainRowState,
+    sub: SubRowState,
+    field: FieldMetaLite,
+    resolved: ResolvedMap | undefined,
+  ): { value: FormValue | undefined; auto: boolean } => {
+    const preset = sub.preset?.[field.id];
+    if (preset !== undefined) return { value: preset, auto: true };
+    return subValueOf(row, sub, field, resolved);
+  };
+
+  /** 多值来源中的单个值 → 子表单选目标字段可用值 */
+  const selectValueOf = (raw: unknown, tableId: string, field: FieldMetaLite): string => {
+    const { id, name } = cellItem(raw);
+    const list = optionsOf(tableId, field);
+    const hit = list.find((o) => o.name === name) ?? list.find((o) => o.id === id);
+    return hit?.id ?? name;
+  };
+
+  /**
+   * 合同选中后的子表初始行：
+   * 映射来源是多值（查找引用 / 多选）且目标为单选时，每个值生成一行（如合同产品线）。
+   */
+  const buildSubRows = (data: DocSourceData | null): Record<string, SubRowState[]> => {
+    const out: Record<string, SubRowState[]> = {};
+    meta?.subMetas.forEach((sm) => {
+      const pairs = Array.from(subResolved.get(sm.tableId)?.values() ?? []);
+      const split = data
+        ? pairs.find((p) => {
+            if (p.to.type !== FT.SingleSelect || p.src === 'main') return false;
+            const raw = (p.src === 'hop1' ? data.hop1 : data.hop2)?.[p.from.id];
+            return splitCellValues(raw).length > 1;
+          })
+        : undefined;
+      if (!split || !data) {
+        out[sm.tableId] = [newSubRow()];
+        return;
+      }
+      const raw = (split.src === 'hop1' ? data.hop1 : data.hop2)?.[split.from.id];
+      out[sm.tableId] = splitCellValues(raw).map((item) => ({
+        key: uid('s'),
+        values: {},
+        preset: { [split.to.id]: selectValueOf(item, sm.tableId, split.to) },
+      }));
+    });
+    return out;
+  };
+
+  /** E1：选择合同后按配置带出主表字段，并按多值拆分生成子表行 */
   const handleContractChange = async (rowKey: string, contractId: string) => {
     patchRow(rowKey, { contractId, loading: !!contractId, fillError: '' });
     if (!contractId || !meta) {
-      patchRow(rowKey, { auto: {}, sourceData: null, subs: emptySubs(), loading: false });
+      patchRow(rowKey, { auto: {}, sourceData: null, subs: buildSubRows(null), loading: false });
       return;
     }
     try {
@@ -388,7 +456,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
       patchRow(rowKey, {
         auto: collectAuto(mainPairs, data),
         sourceData: data,
-        subs: emptySubs(),
+        subs: buildSubRows(data),
         loading: false,
         fillError:
           hasHop2Mapping && !data.hasHop2
@@ -400,7 +468,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
       patchRow(rowKey, {
         auto: {},
         sourceData: null,
-        subs: emptySubs(),
+        subs: buildSubRows(null),
         loading: false,
         fillError: `合同信息带出失败：${errMsg(e)}，请手动填写`,
       });
@@ -433,7 +501,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
         subs.forEach((sub) => {
           requiredFields.forEach((f) => {
             const resolved = subResolved.get(sm.tableId)?.get(f.id);
-            if (isBlank(subValueOf(row, sub, f, resolved).value)) {
+            if (isBlank(subFieldValue(row, sub, f, resolved).value)) {
               miss[`${row.key}:${sm.tableId}:${sub.key}:${f.id}`] = `${tableLabel}·${f.name}`;
             }
           });
@@ -477,7 +545,11 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
             const payload: Record<string, unknown> = {};
             targets.forEach((f) => {
               const resolved = subResolved.get(sm.tableId)?.get(f.id);
-              const built = buildFieldValue(f.type, subValueOf(row, sub, f, resolved).value, f.linkTableId);
+              const built = buildFieldValue(
+                f.type,
+                subFieldValue(row, sub, f, resolved).value,
+                f.linkTableId,
+              );
               if (built !== undefined) payload[f.id] = built;
             });
             payload[sm.linkFieldId] = buildFieldValue(linkType, [mainRecordId], tableId);
@@ -522,95 +594,117 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
 
   const removeSubRow = (rowKey: string, tableId: string, subKey: string) =>
     setRows((prev) =>
-      prev.map((r) =>
-        r.key === rowKey
-          ? { ...r, subs: { ...r.subs, [tableId]: (r.subs[tableId] ?? []).filter((s) => s.key !== subKey) } }
-          : r,
-      ),
+      prev.map((r) => {
+        if (r.key !== rowKey) return r;
+        const list = r.subs[tableId] ?? [];
+        // 至少保留一条子表记录
+        if (list.length <= 1) return r;
+        return { ...r, subs: { ...r.subs, [tableId]: list.filter((s) => s.key !== subKey) } };
+      }),
     );
 
-  const renderSubRow = (
-    row: MainRowState,
-    sm: DocSubMeta,
-    sub: SubRowState,
-    index: number,
-    targets: FieldMetaLite[],
-  ) => {
+  /** 子表：字段做列、记录做行的横向表格，与浏览页保持同一形态 */
+  const renderSubTable = (row: MainRowState, sm: DocSubMeta, targets: FieldMetaLite[]) => {
     const tableLabel = sm.tableName || '子表';
     const resolvedMap = subResolved.get(sm.tableId);
-    const autoCount = targets.filter(
-      (f) => subValueOf(row, sub, f, resolvedMap?.get(f.id)).auto,
-    ).length;
+    const subs = row.subs[sm.tableId] ?? [];
     return (
-      <div className="doc-sub-row" key={sub.key}>
-        <div className="doc-sub-head">
-          <span className="doc-sub-title">
-            {tableLabel} #{index + 1}
+      <div className="doc-sub" key={sm.tableId}>
+        <div className="doc-sub-head-bar">
+          <h4>{tableLabel}</h4>
+          <span className="cfg-hint">
+            {subs.length} 行 · 字段按列排列，超出可横向滚动
           </span>
-          {autoCount > 0 ? (
-            <Tag size="small" color="green">
-              自动带出 {autoCount} 项
-            </Tag>
-          ) : (
-            <Tag size="small" color="grey">
-              待手动填写
-            </Tag>
-          )}
-          {(row.subs[sm.tableId] ?? []).length > 1 ? (
-            <Button
-              theme="borderless"
-              type="danger"
-              size="small"
-              disabled={saving}
-              onClick={() => removeSubRow(row.key, sm.tableId, sub.key)}
-            >
-              删除本行
-            </Button>
-          ) : null}
+          <Button
+            size="small"
+            disabled={saving}
+            onClick={() => addSubRow(row.key, sm.tableId)}
+          >
+            + 新增行
+          </Button>
         </div>
-        <div className={`form-grid cols-${COLS}`}>
-          {targets.map((field) => {
-            const resolved = resolvedMap?.get(field.id);
-            const { value, auto } = subValueOf(row, sub, field, resolved);
-            const isMissing = !!missing[`${row.key}:${sm.tableId}:${sub.key}:${field.id}`];
-            const required = sm.required.includes(field.id);
-            return (
-              <div className={`form-item${isMissing ? ' missing' : ''}`} key={field.id}>
-                <label className="form-label">
-                  {fieldLabel(field, cfgMap.get(field.id))}
-                  {required ? <i className="field-required">*</i> : null}
-                </label>
-                {auto ? (
-                  <div className="form-readonly">
-                    {displayText(
-                      value,
-                      field,
-                      optionsOf(sm.tableId, field),
-                      userOptionsOf(sm.tableId, field),
-                    ) || '—'}
-                    <Tag size="small" color="green">
-                      {sourceTag(resolved?.src ?? 'main')}
-                    </Tag>
-                  </div>
-                ) : (
-                  <FieldEditor
-                    field={field}
-                    value={sub.values[field.id]}
-                    onChange={(v) =>
-                      patchSubValues(row.key, sm.tableId, sub.key, {
-                        ...sub.values,
-                        [field.id]: v,
-                      })
-                    }
-                    options={optionsOf(sm.tableId, field)}
-                    userOptions={userOptionsOf(sm.tableId, field)}
-                    linkTableId={field.linkTableId}
-                    label={fieldLabel(field, cfgMap.get(field.id))}
-                  />
-                )}
-              </div>
-            );
-          })}
+        <div className="sub-table-wrap">
+          <table className="sub-table doc-sub-table">
+            <thead>
+              <tr>
+                <th className="sub-col-index">#</th>
+                {targets.map((field) => (
+                  <th key={field.id}>
+                    {fieldLabel(field, cfgMap.get(field.id))}
+                    {sm.required.includes(field.id) ? (
+                      <i className="field-required">*</i>
+                    ) : null}
+                  </th>
+                ))}
+                <th className="sub-col-op">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subs.length ? (
+                subs.map((sub, j) => (
+                  <tr key={sub.key}>
+                    <td className="sub-col-index">{j + 1}</td>
+                    {targets.map((field) => {
+                      const resolved = resolvedMap?.get(field.id);
+                      const { value, auto } = subFieldValue(row, sub, field, resolved);
+                      const isMissing = !!missing[
+                        `${row.key}:${sm.tableId}:${sub.key}:${field.id}`
+                      ];
+                      return (
+                        <td key={field.id} className={isMissing ? 'missing' : undefined}>
+                          {auto ? (
+                            <div className="form-readonly sub-readonly">
+                              {displayText(
+                                value,
+                                field,
+                                optionsOf(sm.tableId, field),
+                                userOptionsOf(sm.tableId, field),
+                              ) || '—'}
+                              <Tag size="small" color="green">
+                                {sourceTag(resolved?.src ?? 'main')}
+                              </Tag>
+                            </div>
+                          ) : (
+                            <FieldEditor
+                              field={field}
+                              value={sub.values[field.id]}
+                              onChange={(v) =>
+                                patchSubValues(row.key, sm.tableId, sub.key, {
+                                  ...sub.values,
+                                  [field.id]: v,
+                                })
+                              }
+                              options={optionsOf(sm.tableId, field)}
+                              userOptions={userOptionsOf(sm.tableId, field)}
+                              linkTableId={field.linkTableId}
+                              label={fieldLabel(field, cfgMap.get(field.id))}
+                            />
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="sub-col-op">
+                      <Button
+                        theme="borderless"
+                        type="danger"
+                        size="small"
+                        disabled={saving || subs.length <= 1}
+                        onClick={() => removeSubRow(row.key, sm.tableId, sub.key)}
+                      >
+                        删除
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td className="sub-table-empty" colSpan={targets.length + 2}>
+                    每张子表至少需要 1 行记录
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -628,7 +722,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
           <div>
             <h2>{title}新增</h2>
             <span className="cfg-hint">
-              选择合同后自动带出合同与关联信息（只读）；每张子表会自动新增 1 行，其余字段请逐条录入。
+              选择合同后自动带出合同与关联信息（只读）；子表按行横向录入，多值字段（如产品线）会按值拆成多行。
             </span>
           </div>
           <Button theme="borderless" onClick={onCancel}>
@@ -743,26 +837,9 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
                     })}
                   </div>
 
-                  {meta.subMetas.map((sm) => {
-                    const targets = subTargetMap.get(sm.tableId) ?? [];
-                    const tableLabel = sm.tableName || '子表';
-                    const subs = row.subs[sm.tableId] ?? [];
-                    return (
-                      <div className="doc-sub" key={sm.tableId}>
-                        <div className="doc-sub-head-bar">
-                          <h4>{tableLabel}</h4>
-                          <Button size="small" disabled={saving} onClick={() => addSubRow(row.key, sm.tableId)}>
-                            + 新增{tableLabel}行
-                          </Button>
-                        </div>
-                        {subs.length ? (
-                          subs.map((sub, j) => renderSubRow(row, sm, sub, j, targets))
-                        ) : (
-                          <div className="form-error">每张子表至少需要 1 行记录</div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {meta.subMetas.map((sm) =>
+                    renderSubTable(row, sm, subTargetMap.get(sm.tableId) ?? []),
+                  )}
                 </section>
               ))}
 
