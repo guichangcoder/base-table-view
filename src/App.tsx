@@ -5,6 +5,7 @@ import {
   getHostState,
   isConfigState,
   loadConfig,
+  markRendered,
   type ConfigSource,
   type HostState,
 } from './services/configService';
@@ -72,6 +73,12 @@ export default function App() {
       alive = false;
     };
   }, [reloadKey, hostChecked]);
+
+  // 渲染完成后主动告知宿主（开发指南要求），宿主据此解除插件容器的加载占位
+  useEffect(() => {
+    if (!hostChecked || loading) return;
+    markRendered();
+  }, [hostChecked, loading, reloadKey]);
 
   if (!hostChecked) {
     return (

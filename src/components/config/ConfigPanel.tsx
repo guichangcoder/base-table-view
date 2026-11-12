@@ -30,7 +30,8 @@ const SOURCE_LABEL: Record<ConfigSource, string> = {
 /** 配置态：选 Base / 选表 / 分组布局 / 字段规则 / 关联展示 */
 export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props) {
   const [config, setConfig] = useState<PluginData>(initial);
-  const [baseToken, setBaseToken] = useState(getBaseToken());
+  // 优先取当前已绑定的 token；否则用配置里持久化的 token（loadConfig 绑定失败时仍能识别）
+  const [baseToken, setBaseToken] = useState(getBaseToken() || initial.baseToken || '');
   const [baseName, setBaseName] = useState(getBaseName());
   const [tables, setTables] = useState<TableMetaLite[]>([]);
   const [fields, setFields] = useState<FieldMetaLite[]>([]);
@@ -49,6 +50,21 @@ export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props)
         if (alive && typeof n === 'string' && n) setBaseName(n);
       })
       .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [baseToken, baseName]);
+
+  // 配置里记了 baseToken 但当前上下文尚未绑定（loadConfig 绑定失败或被跳过）时补一次绑定。
+  // 绑定失败会让保存落到未绑定的宿主实例上，宿主的配置弹窗就会一直停在「加载中」。
+  useEffect(() => {
+    if (!baseToken || getBaseToken() === baseToken) return;
+    let alive = true;
+    selectBase(baseToken, baseName || undefined).then((ok) => {
+      if (!alive || ok) return;
+      setError('无法绑定配置中的多维表格（可能没有权限或已被删除），请重新选择多维表格');
+      setBaseToken('');
+    });
     return () => {
       alive = false;
     };
@@ -139,6 +155,10 @@ export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props)
   };
 
   const handleSave = async () => {
+    if (!baseToken) {
+      Toast.error('请先选择多维表格');
+      return;
+    }
     if (!config.tableId) {
       Toast.error('请先选择数据表');
       return;
@@ -146,7 +166,7 @@ export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props)
     setSaving(true);
     setError('');
     try {
-      const res = await saveConfig(config);
+      const res = await saveConfig({ ...config, baseToken });
       if (res.persisted === 'host') {
         Toast.success(`配置已保存（${res.bytes} 字节），所有用户刷新后看到同一份配置`);
       } else {

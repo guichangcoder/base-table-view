@@ -148,6 +148,21 @@ export function getDashboard(): typeof dashboard {
   }
 }
 
+/**
+ * 仅返回 Workspace 绑定后的 dashboard 实例；未绑定 base 时为 null。
+ *
+ * 应用模式下全局 dashboard 的 saveConfig 内部会先读全局 base 的表列表
+ * （SDK 实现：genDefaultConfig → base.getTableList），全局 base 在该点位未绑定，
+ * 这个 Promise 永不回包，宿主配置弹窗就会一直停在「加载中」。所以保存必须走绑定实例。
+ */
+export function getBoundDashboard(): typeof dashboard | null {
+  try {
+    return (currentApp?.dashboard as typeof dashboard) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** 仅供内存回归测试：直接注入 mock base 实例（生产代码不要调用） */
 export function __setAppForTest(app: Partial<BitableAppInstance> | null): void {
   currentApp = (app as BitableAppInstance) ?? null;
