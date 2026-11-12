@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, DatePicker, Input, InputNumber, Select, Switch, Tag, Toast } from '@douyinfe/semi-ui';
+import { Button, Tag, Toast } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, PluginData, RecordRow } from '../../types';
 import { isButtonField, visibleFieldIds } from '../../utils/configOps';
@@ -22,9 +22,8 @@ import {
   loadDraft,
   saveDraft,
 } from '../../services/draftService';
-import { typeLabel } from '../config/FieldSection';
 import { RecordButton } from '../view/RecordButton';
-import { LinkFieldSelect } from './LinkFieldSelect';
+import { FieldEditor } from './FieldEditor';
 
 const FT = FieldType as any;
 
@@ -278,125 +277,18 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
       );
     }
 
-    switch (field.type) {
-      case FT.Text:
-        return (
-          <Input
-            value={String(v ?? '')}
-            placeholder={`请输入${fieldLabel(field, cfg)}`}
-            onChange={(val) => setValue(field.id, val)}
-          />
-        );
-      case FT.Phone:
-      case FT.Email:
-      case FT.Url:
-        return (
-          <Input
-            value={String(v ?? '')}
-            placeholder={`请输入${typeLabel(field.type)}`}
-            onChange={(val) => setValue(field.id, val)}
-          />
-        );
-      case FT.Number:
-      case FT.Currency:
-      case FT.Progress:
-      case FT.Rating:
-        return (
-          <InputNumber
-            value={typeof v === 'number' ? v : undefined}
-            placeholder="请输入数字"
-            style={{ width: '100%' }}
-            onChange={(n) => setValue(field.id, typeof n === 'number' ? n : '')}
-          />
-        );
-      case FT.SingleSelect:
-        return (
-          <Select
-            value={typeof v === 'string' && v ? v : undefined}
-            placeholder="请选择"
-            showClear
-            filter
-            style={{ width: '100%' }}
-            optionList={optionsOf(field).map((o) => ({ label: o.name, value: o.id }))}
-            onChange={(val) => setValue(field.id, val ? String(val) : '')}
-          />
-        );
-      case FT.MultiSelect:
-        return (
-          <Select
-            multiple
-            value={Array.isArray(v) ? v : []}
-            placeholder="可多选"
-            filter
-            maxTagCount={4}
-            style={{ width: '100%' }}
-            optionList={optionsOf(field).map((o) => ({ label: o.name, value: o.id }))}
-            onChange={(val) => setValue(field.id, Array.isArray(val) ? val.map(String) : [])}
-          />
-        );
-      case FT.DateTime:
-        return (
-          <DatePicker
-            type="dateTime"
-            style={{ width: '100%' }}
-            value={typeof v === 'number' && v ? new Date(v) : undefined}
-            onChange={(d: any) => setValue(field.id, d instanceof Date ? d.getTime() : '')}
-          />
-        );
-      case FT.Checkbox:
-        return (
-          <Switch
-            checked={v === true}
-            onChange={(checked) => setValue(field.id, !!checked)}
-          />
-        );
-      case FT.User: {
-        const options = users[field.id] ?? [];
-        return (
-          <Select
-            multiple
-            value={Array.isArray(v) ? v : []}
-            placeholder={options.length ? '请选择人员' : '正在读取人员候选…'}
-            filter
-            maxTagCount={4}
-            style={{ width: '100%' }}
-            optionList={options.map((u) => ({ label: u.name, value: u.id }))}
-            onChange={(val) => setValue(field.id, Array.isArray(val) ? val.map(String) : [])}
-          />
-        );
-      }
-      case FT.SingleLink:
-      case FT.DuplexLink: {
-        const targetTableId = linkTableIdOf(field);
-        if (!targetTableId) {
-          return (
-            <div className="form-readonly">
-              {formatCellValue(record?.fields?.[field.id], field) || '—'}
-              <Tag size="small" color="grey">
-                无法获取关联表
-              </Tag>
-            </div>
-          );
-        }
-        return (
-          <LinkFieldSelect
-            key={targetTableId}
-            tableId={targetTableId}
-            value={Array.isArray(v) ? v.map(String) : []}
-            onChange={(ids) => setValue(field.id, ids)}
-          />
-        );
-      }
-      default:
-        return (
-          <div className="form-readonly">
-            {formatCellValue(record?.fields?.[field.id], field) || '—'}
-            <Tag size="small" color="grey">
-              暂不支持编辑
-            </Tag>
-          </div>
-        );
-    }
+    return (
+      <FieldEditor
+        field={field}
+        value={v}
+        onChange={(val) => setValue(field.id, val)}
+        options={optionsOf(field)}
+        userOptions={users[field.id]}
+        linkTableId={linkTableIdOf(field)}
+        label={fieldLabel(field, cfg)}
+        fallbackText={formatCellValue(record?.fields?.[field.id], field)}
+      />
+    );
   };
 
   return (

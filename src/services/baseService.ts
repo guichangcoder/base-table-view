@@ -1,5 +1,6 @@
 import { FieldType } from '@lark-base-open/js-sdk';
 import { diagnoseAppContext, getBase, getBaseToken, getGlobalBase } from './appContext';
+import { METADATA_TIMEOUT, withTimeout } from '../utils/timeout';
 import type { FieldMetaLite, TableMetaLite } from '../types';
 
 const FT = FieldType as any;
@@ -99,7 +100,11 @@ export function isTextType(type: number): boolean {
 
 export async function listTables(): Promise<TableMetaLite[]> {
   const base = getBase() as any;
-  const metas: any[] = await base.getTableMetaList();
+  const metas: any[] = await withTimeout(
+    Promise.resolve(base.getTableMetaList()),
+    METADATA_TIMEOUT,
+    'getTableMetaList',
+  );
   return (metas || []).map((m) => ({ id: String(m.id), name: String(m.name ?? m.id) }));
 }
 
@@ -124,7 +129,11 @@ function basesToTry(): Array<{ label: string; base: any }> {
 async function resolveTable(tableId: string, errors: string[]): Promise<any | null> {
   for (const { label, base } of basesToTry()) {
     try {
-      const t = await base.getTableById(tableId);
+      const t = await withTimeout(
+        Promise.resolve(base.getTableById(tableId)),
+        METADATA_TIMEOUT,
+        `${label}.getTableById`,
+      );
       if (t) return t;
       errors.push(`${label}.getTableById 返回空`);
     } catch (e) {
@@ -166,7 +175,11 @@ function mapFieldMeta(m: any): FieldMetaLite {
 }
 
 async function readFields(table: any): Promise<FieldMetaLite[]> {
-  const metas: any[] = await table.getFieldMetaList();
+  const metas: any[] = await withTimeout(
+    Promise.resolve(table.getFieldMetaList()),
+    METADATA_TIMEOUT,
+    'getFieldMetaList',
+  );
   return (metas || []).map(mapFieldMeta);
 }
 
@@ -206,16 +219,24 @@ export async function listSelectOptions(
 ): Promise<SelectOptionLite[]> {
   const table = await getTableCached(tableId);
   try {
-    const field: any = await table.getFieldById(fieldId);
+    const field: any = await withTimeout(
+      Promise.resolve(table.getFieldById(fieldId)),
+      METADATA_TIMEOUT,
+      'getFieldById',
+    );
     if (field && typeof field.getOptions === 'function') {
-      const list = mapOptions(await field.getOptions());
+      const list = mapOptions(await withTimeout(Promise.resolve(field.getOptions()), METADATA_TIMEOUT, 'getOptions'));
       if (list.length) return list;
     }
   } catch (e) {
     console.warn('[baseService] getOptions 读取失败，回落到字段元信息:', e);
   }
   try {
-    const meta: any = await table.getFieldMetaById(fieldId);
+    const meta: any = await withTimeout(
+      Promise.resolve(table.getFieldMetaById(fieldId)),
+      METADATA_TIMEOUT,
+      'getFieldMetaById',
+    );
     return mapOptions(meta?.property?.options);
   } catch (e) {
     console.warn('[baseService] getFieldMetaById 读取失败:', e);
@@ -271,7 +292,7 @@ export async function getTableName(tableId: string, table?: any): Promise<string
   try {
     const t = table ?? (await resolveTable(tableId, []));
     if (!t || typeof t.getName !== 'function') return '';
-    const name = await t.getName();
+    const name = await withTimeout(Promise.resolve(t.getName()), METADATA_TIMEOUT, 'getName');
     return typeof name === 'string' ? name : '';
   } catch {
     return '';

@@ -1,4 +1,16 @@
-import { CONFIG_VERSION, emptyConfig, type PluginData, type FieldConfig, type GroupConfig, type LinkDisplayConfig } from '../types';
+import {
+  CONFIG_VERSION,
+  emptyConfig,
+  type DocConfig,
+  type DocMapItem,
+  type DocMapping,
+  type DocSource,
+  type DocSubConfig,
+  type PluginData,
+  type FieldConfig,
+  type GroupConfig,
+  type LinkDisplayConfig,
+} from '../types';
 
 /**
  * 契约 6：customConfig 有 10240 字节上限。
@@ -51,6 +63,128 @@ function compactLink(l: LinkDisplayConfig): LinkDisplayConfig {
   };
 }
 
+function isSource(v: unknown): v is DocSource {
+  return v === 'main' || v === 'hop1' || v === 'hop2';
+}
+
+function compactMapping(m?: DocMapping): DocMapping | undefined {
+  if (!m) return undefined;
+  const items: DocMapItem[] = [];
+  (m.items ?? []).forEach((it) => {
+    if (!it || !it.to) return;
+    const src: DocSource = isSource(it.src) ? it.src : 'hop1';
+    items.push(it.from ? { to: it.to, src, from: it.from } : { to: it.to, src });
+  });
+  return items.length ? { items } : undefined;
+}
+
+function compactSub(s: DocSubConfig): DocSubConfig | undefined {
+  if (!s || !s.tableId) return undefined;
+  const out: DocSubConfig = { tableId: s.tableId, linkFieldId: s.linkFieldId || '' };
+  const required = Array.from(new Set((s.required ?? []).filter(Boolean)));
+  if (required.length) out.required = required;
+  const mapping = compactMapping(s.mapping);
+  if (mapping) out.mapping = mapping;
+  return out;
+}
+
+/** 单据配置瘦身：未启用且没做过任何选择时整个丢弃 */
+function compactDoc(d?: DocConfig): DocConfig | undefined {
+  if (!d) return undefined;
+  const subs = (d.subs ?? []).map(compactSub).filter((s): s is DocSubConfig => !!s);
+  const hasBody = !!(d.contractFieldId || subs.length);
+  if (!d.enabled && !hasBody) return undefined;
+  const out: DocConfig = { enabled: !!d.enabled, subs };
+  if (d.name && d.name.trim()) out.name = d.name.trim();
+  if (d.contractFieldId) out.contractFieldId = d.contractFieldId;
+  if (d.customerFieldId) out.customerFieldId = d.customerFieldId;
+  const main = compactMapping(d.main);
+  if (main) out.main = main;
+  return out;
+}
+
+/** 旧版（overrides/excludes）映射结构，读取时迁移成 items */
+function hydrateLegacyMapping(raw: unknown, src: DocSource): DocMapping | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as { overrides?: unknown; excludes?: unknown };
+  const items: DocMapItem[] = [];
+  if (Array.isArray(r.overrides)) {
+    r.overrides.forEach((o) => {
+      const it = o as { from?: unknown; to?: unknown };
+      if (it && typeof it === 'object' && it.to && it.from) {
+        items.push({ to: String(it.to), src, from: String(it.from) });
+      }
+    });
+  }
+  if (Array.isArray(r.excludes)) {
+    r.excludes.forEach((id) => {
+      if (id) items.push({ to: String(id), src, from: '' });
+    });
+  }
+  return items.length ? { items } : undefined;
+}
+
+function hydrateMapping(raw: unknown, legacySrc: DocSource): DocMapping | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as { items?: unknown };
+  if (!Array.isArray(r.items)) return hydrateLegacyMapping(raw, legacySrc);
+  const items: DocMapItem[] = [];
+  r.items.forEach((it) => {
+    const v = it as { to?: unknown; src?: unknown; from?: unknown };
+    if (!v || typeof v !== 'object' || !v.to) return;
+    items.push({
+      to: String(v.to),
+      src: isSource(v.src) ? v.src : legacySrc,
+      from: typeof v.from === 'string' ? v.from : '',
+    });
+  });
+  return { items };
+}
+
+function hydrateSub(raw: unknown): DocSubConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const s = raw as Partial<DocSubConfig>;
+  if (!s.tableId) return undefined;
+  return {
+    tableId: String(s.tableId),
+    linkFieldId: typeof s.linkFieldId === 'string' ? s.linkFieldId : '',
+    required: Array.isArray(s.required) ? s.required.map(String).filter(Boolean) : [],
+    mapping: hydrateMapping(s.mapping, 'main'),
+  };
+}
+
+function hydrateDoc(raw: unknown): DocConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const d = raw as Partial<DocConfig> & {
+    subTableId?: string;
+    subLinkFieldId?: string;
+    subRequired?: string[];
+    sub?: unknown;
+  };
+  // 旧版单子表配置迁移成 subs[0]
+  let subs: DocSubConfig[] = Array.isArray(d.subs)
+    ? d.subs.map(hydrateSub).filter((s): s is DocSubConfig => !!s)
+    : [];
+  if (!subs.length && d.subTableId) {
+    subs = [
+      {
+        tableId: String(d.subTableId),
+        linkFieldId: typeof d.subLinkFieldId === 'string' ? d.subLinkFieldId : '',
+        required: Array.isArray(d.subRequired) ? d.subRequired.map(String).filter(Boolean) : [],
+        mapping: hydrateMapping(d.sub, 'hop2'),
+      },
+    ];
+  }
+  return {
+    enabled: !!d.enabled,
+    name: typeof d.name === 'string' ? d.name : undefined,
+    contractFieldId: typeof d.contractFieldId === 'string' ? d.contractFieldId : undefined,
+    customerFieldId: typeof d.customerFieldId === 'string' ? d.customerFieldId : undefined,
+    main: hydrateMapping(d.main, 'hop1'),
+    subs,
+  };
+}
+
 /** 落盘前的瘦身序列化：只留用户决策字段 */
 export function serializeConfig(data: PluginData): PluginData {
   const out: PluginData = {
@@ -64,6 +198,8 @@ export function serializeConfig(data: PluginData): PluginData {
   if (data.baseToken) out.baseToken = data.baseToken;
   if (data.baseId) out.baseId = data.baseId;
   if (data.tableId) out.tableId = data.tableId;
+  const doc = compactDoc(data.doc);
+  if (doc) out.doc = doc;
   return out;
 }
 
@@ -114,5 +250,6 @@ export function hydrateConfig(raw: unknown): PluginData {
             maxRows: typeof l.maxRows === 'number' ? l.maxRows : 20,
           }))
       : [],
+    doc: hydrateDoc(r.doc),
   };
 }

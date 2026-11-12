@@ -8,6 +8,8 @@ interface Props {
   value: string[];
   onChange: (ids: string[]) => void;
   disabled?: boolean;
+  /** 单选模式：用于「合同」这类单值关联字段 */
+  single?: boolean;
 }
 
 const SEARCH_DEBOUNCE = 300;
@@ -19,7 +21,7 @@ const FALLBACK_LABEL = '未命名记录';
  * 关联字段编辑器：候选记录取自关联表首列，支持远程搜索。
  * 已选记录即使不在当前候选里也会保留标题，避免编辑态回显丢失。
  */
-export function LinkFieldSelect({ tableId, value, onChange, disabled }: Props) {
+export function LinkFieldSelect({ tableId, value, onChange, disabled, single }: Props) {
   const [candidates, setCandidates] = useState<LinkCandidate[]>([]);
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -120,19 +122,22 @@ export function LinkFieldSelect({ tableId, value, onChange, disabled }: Props) {
 
   return (
     <Select
-      multiple
+      multiple={!single}
       remote
       filter
       showClear
-      maxTagCount={4}
+      maxTagCount={single ? undefined : 4}
       style={{ width: '100%' }}
       disabled={disabled}
       loading={loading}
-      value={value}
+      value={single ? value[0] ?? '' : value}
       placeholder="搜索并选择关联记录"
       optionList={options}
       onSearch={handleSearch}
-      onChange={(v) => onChange(Array.isArray(v) ? v.map(String) : [])}
+      onChange={(v) => {
+        if (single) onChange(v === undefined || v === null || v === '' ? [] : [String(v)]);
+        else onChange(Array.isArray(v) ? v.map(String) : []);
+      }}
     />
   );
 }

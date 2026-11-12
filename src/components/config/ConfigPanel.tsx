@@ -11,6 +11,7 @@ import { SettingsSection } from './SettingsSection';
 import { GroupSection } from './GroupSection';
 import { FieldSection } from './FieldSection';
 import { LinkSection } from './LinkSection';
+import { DocSection } from './DocSection';
 
 interface Props {
   initial: PluginData;
@@ -267,6 +268,7 @@ export function ConfigPanel({ initial, source, droppedForeign, onSaved }: Props)
           <FieldSection config={config} fields={fields} onChange={setConfig} />
           <SettingsSection config={config} fields={fields} onChange={setConfig} />
           <LinkSection config={config} fields={fields} onChange={setConfig} />
+          <DocSection config={config} fields={fields} tables={tables} onChange={setConfig} />
         </>
       ) : (
         <div className="cfg-card">

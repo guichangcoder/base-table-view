@@ -45,6 +45,59 @@ export interface LinkDisplayConfig {
   maxRows: number;
 }
 
+/**
+ * 单据字段来源：
+ * - main：主表当前记录（含带出值）
+ * - hop1：主表关联的合同记录
+ * - hop2：合同关联的客户记录
+ */
+export type DocSource = 'main' | 'hop1' | 'hop2';
+
+/** 单个目标字段的带出配置；from 为空串表示该字段不带出 */
+export interface DocMapItem {
+  /** 目标字段 id */
+  to: string;
+  /** 来源 */
+  src: DocSource;
+  /** 来源字段 id（空串 = 不带出） */
+  from?: string;
+}
+
+/** 目标字段 → 来源字段 的映射（缺省按同名字段自动匹配默认来源） */
+export interface DocMapping {
+  items: DocMapItem[];
+}
+
+/** 单张子表配置 */
+export interface DocSubConfig {
+  /** 子表 id */
+  tableId: string;
+  /** 子表上指向主表的关联字段 */
+  linkFieldId: string;
+  /** 子表必填字段 */
+  required?: string[];
+  /** 子表目标字段 → 来源字段 映射 */
+  mapping?: DocMapping;
+}
+
+/**
+ * 主子表单据（如「项目立项单」）新增页配置。
+ * 合同字段按映射自动带出到主表并置只读；可配置多张子表，各自指定带出字段与来源。
+ */
+export interface DocConfig {
+  enabled: boolean;
+  /** 单据名称，作为新增页标题与入口按钮文案 */
+  name?: string;
+  /** 主表上指向合同表的关联字段：选中合同后据此带出字段 */
+  contractFieldId?: string;
+  /** 合同表上指向客户表的关联字段：客户信息取自该关联记录 */
+  customerFieldId?: string;
+  /** 合同/客户 → 主表 字段映射 */
+  main?: DocMapping;
+  /** 子表列表（可多张） */
+  subs: DocSubConfig[];
+}
+
 /** 持久化根对象（customConfig） */
 export interface PluginData {
   version: number;
@@ -61,6 +114,8 @@ export interface PluginData {
   /** 允许关键词搜索的字段（一期：文本类） */
   searchFieldIds: string[];
   links: LinkDisplayConfig[];
+  /** 主子表单据新增配置（未启用时不落盘） */
+  doc?: DocConfig;
 }
 
 export const CONFIG_VERSION = 1;

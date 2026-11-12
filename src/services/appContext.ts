@@ -7,6 +7,7 @@
  * 业务代码统一从这里取实例，禁止直接 import 全局 bitable 后调用。
  */
 import { workspace, bitable, dashboard } from '@lark-base-open/js-sdk';
+import { METADATA_TIMEOUT, withTimeout } from '../utils/timeout';
 
 /** Workspace.getBitable 返回的形态（IBitableApp 未从包根导出，自定义） */
 export interface BitableAppInstance {
@@ -52,17 +53,30 @@ export async function listBases(query?: string, cursor?: string): Promise<any> {
   const params: { query?: string; page?: { cursor?: string } } = {};
   if (query) params.query = query;
   if (cursor) params.page = { cursor };
-  return await (workspace as any).getBaseList(params);
+  return await withTimeout(
+    Promise.resolve((workspace as any).getBaseList(params)),
+    METADATA_TIMEOUT,
+    'workspace.getBaseList',
+  );
 }
 
 /** 选中一个多维表格：通过 Workspace 获取该 base 的完整实例并设为当前上下文 */
 export async function selectBase(baseToken: string, baseName?: string): Promise<boolean> {
   if (!baseToken) return false;
+  // 非应用插件点位（浏览器直开）没有 Workspace，直接失败，避免调用永不回包
+  if (!isWorkspaceAvailable()) {
+    console.warn('[appContext] Workspace 不可用，跳过 getBitable');
+    return false;
+  }
   const MAX_ATTEMPTS = 3;
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const app = await (workspace as any).getBitable(baseToken);
+      const app = await withTimeout(
+        Promise.resolve((workspace as any).getBitable(baseToken)),
+        5000,
+        'workspace.getBitable',
+      );
       if (!app || !app.base) {
         lastErr = new Error('getBitable 返回空实例');
       } else {

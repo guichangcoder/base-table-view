@@ -4,6 +4,7 @@
  */
 import {
   CONFIG_VERSION,
+  type DocConfig,
   type FieldConfig,
   type FieldMetaLite,
   type GroupConfig,
@@ -21,6 +22,36 @@ export function uid(prefix = 'g'): string {
 function isLink(type: number): boolean {
   // 18 = SingleLink, 21 = DuplexLink
   return type === 18 || type === 21;
+}
+
+/** 单据（主子表）配置的默认值 */
+export function emptyDocConfig(): DocConfig {
+  return {
+    enabled: false,
+    main: { items: [] },
+    subs: [],
+  };
+}
+
+/** 合并更新单据配置 */
+export function updateDoc(config: PluginData, patch: Partial<DocConfig>): PluginData {
+  return { ...config, doc: { ...(config.doc ?? emptyDocConfig()), ...patch } };
+}
+
+/** 校正单据配置里对主表字段的引用（字段被删/改了类型后自动清理） */
+function sanitizeDoc(doc: DocConfig | undefined, byId: Map<string, FieldMetaLite>): DocConfig | undefined {
+  if (!doc) return undefined;
+  const out: DocConfig = { ...doc };
+  if (out.contractFieldId) {
+    const f = byId.get(out.contractFieldId);
+    if (!f || !isLink(f.type)) out.contractFieldId = undefined;
+  }
+  if (out.main) {
+    out.main = { items: (out.main.items ?? []).filter((it) => byId.has(it.to)) };
+  }
+  // 子表字段属于其它数据表，这里只清理明显无效的配置（空表 id）
+  out.subs = (out.subs ?? []).filter((s) => !!s.tableId);
+  return out;
 }
 
 function defaultFieldConfig(f: FieldMetaLite): FieldConfig {
@@ -148,6 +179,7 @@ export function syncConfig(config: PluginData, fields: FieldMetaLite[]): PluginD
     links,
     filterFieldIds: config.filterFieldIds.filter((id) => byId.has(id)),
     searchFieldIds: config.searchFieldIds.filter((id) => byId.has(id)),
+    doc: sanitizeDoc(config.doc, byId),
   };
 }
 

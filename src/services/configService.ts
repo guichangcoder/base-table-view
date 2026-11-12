@@ -20,6 +20,7 @@ import {
 } from './appContext';
 import { hydrateConfig, serializeConfig, estimateConfigBytes } from './configSize';
 import { listTables } from './baseService';
+import { HOST_TIMEOUT, SAVE_TIMEOUT, withTimeout } from '../utils/timeout';
 
 export type HostState = 'Create' | 'Config' | 'View' | 'FullScreen' | 'Unknown';
 export type ConfigSource = 'dashboard' | 'bridge' | 'local' | 'none';
@@ -28,24 +29,6 @@ const CONFIG_KEY = 'bitable-record-view-plugin:config';
 const LOCAL_PREFIX = 'bitable-record-view-plugin:backup';
 /** customConfig 字节上限（宿主硬约束） */
 export const MAX_CUSTOM_CONFIG_BYTES = 10240;
-const HOST_CALL_TIMEOUT = 3000;
-
-/** 给宿主调用加超时，避免浏览器直开时 SDK Promise 永不 resolve */
-function withTimeout<T>(p: Promise<T>, ms = HOST_CALL_TIMEOUT): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('宿主接口超时')), ms);
-    p.then(
-      (v) => {
-        clearTimeout(timer);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(timer);
-        reject(e);
-      },
-    );
-  });
-}
 
 /** 是否运行在飞书应用模式宿主内 */
 export function isDashboardHost(): boolean {
@@ -92,11 +75,17 @@ export function isConfigState(state: HostState): boolean {
 export async function getBaseId(): Promise<string> {
   const token = getBaseToken();
   if (token) return token;
+  // 非宿主（浏览器直开调试）没有 base 上下文：直接返回空标识，避免无谓的宿主调用超时等待
+  if (!isDashboardHost()) return '';
   try {
-    const name = await (getBase() as any).getBaseName();
+    const name = await withTimeout(
+      Promise.resolve((getBase() as any).getBaseName()),
+      HOST_TIMEOUT,
+      'getBaseName',
+    );
     if (name) return `name:${name}`;
   } catch {
-    /* ignore */
+    /* 非宿主环境下取不到 base 名，走空标识 */
   }
   return '';
 }
@@ -153,10 +142,13 @@ function readLocal(baseId: string): unknown {
 }
 
 async function writeBackup(config: PluginData, baseId: string): Promise<void> {
-  try {
-    await getBridge().setData(CONFIG_KEY, config);
-  } catch {
-    /* bridge 不可用时忽略，localStorage 仍可用 */
+  // bridge 只在宿主内可用；非宿主下调用会挂着等不到回包，直接跳过
+  if (isDashboardHost()) {
+    try {
+      await withTimeout(Promise.resolve(getBridge().setData(CONFIG_KEY, config)), HOST_TIMEOUT, 'bridge.setData');
+    } catch {
+      /* bridge 不可用时忽略，localStorage 仍可用 */
+    }
   }
   try {
     localStorage.setItem(`${LOCAL_PREFIX}:${baseId || 'default'}`, JSON.stringify(config));
@@ -216,8 +208,8 @@ export async function loadConfig(): Promise<LoadConfigResult> {
 
   const currentBaseId = await getBaseId();
 
-  // 2) bridge 备份
-  const bridgeData = await readBridge();
+  // 2) bridge 备份（仅宿主内可用；非宿主直接跳过，避免挂在永不回包的宿主接口）
+  const bridgeData = isDashboardHost() ? await readBridge() : null;
   if (bridgeData) {
     const parsed = hydrateConfig(bridgeData);
     if (isUsableConfig(parsed)) {
@@ -290,8 +282,6 @@ export async function saveConfig(input: PluginData): Promise<SaveResult> {
   const thin = serializeConfig({ ...input, baseToken, baseId });
   if (!thin.tableId) throw new Error('请先选择数据表');
 
-  await assertTablesInBase(thin);
-
   const bytes = estimateConfigBytes(thin);
   if (bytes > MAX_CUSTOM_CONFIG_BYTES) {
     throw new Error(`配置体积 ${bytes} 字节，超过 ${MAX_CUSTOM_CONFIG_BYTES} 字节上限，请精简分组或字段配置`);
@@ -302,18 +292,25 @@ export async function saveConfig(input: PluginData): Promise<SaveResult> {
     customConfig: thin as unknown as Record<string, unknown>,
   };
 
+  // 非宿主（浏览器直开调试）：只写本地备份，不做宿主侧校验，避免调用永不回包的宿主接口
   if (!isDashboardHost()) {
     await writeBackup(thin, baseId);
     console.info('[configService] 非宿主环境，仅写入本地备份，配置字节数:', bytes);
     return { bytes, persisted: 'local' };
   }
 
+  await assertTablesInBase(thin);
+
   const MAX_ATTEMPTS = 3;
   let saved = false;
   let lastErr = '';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const r = await (getDashboard() as any).saveConfig(payload);
+      const r = await withTimeout<any>(
+        (getDashboard() as any).saveConfig(payload),
+        SAVE_TIMEOUT,
+        'dashboard.saveConfig',
+      );
       if (r === false) lastErr = 'dashboard.saveConfig 返回 false';
       else {
         saved = true;
@@ -321,6 +318,8 @@ export async function saveConfig(input: PluginData): Promise<SaveResult> {
       }
     } catch (e) {
       lastErr = String((e as Error)?.message ?? e);
+      // 超时说明宿主始终不回包，重试无意义，立即失败而不是让按钮一直转圈
+      if (lastErr.includes('超时')) break;
     }
     if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 500));
   }

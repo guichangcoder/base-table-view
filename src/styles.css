@@ -1309,6 +1309,178 @@ p.cfg-hint {
   border-top: 1px solid var(--c-border-weak);
 }
 
+/* ================================================================ 主子表单据 */
+
+.doc-panel {
+  width: min(920px, 96vw);
+}
+
+.doc-row {
+  padding: 14px 16px 16px;
+  margin-bottom: 14px;
+  background: var(--c-card);
+  border: 1px solid var(--c-border-weak);
+  border-radius: var(--radius);
+}
+
+.doc-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.doc-row-head h3 {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.doc-contract {
+  margin-bottom: 12px;
+}
+
+.doc-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.doc-sub {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: #fafbfc;
+  border: 1px solid var(--c-border-weak);
+  border-radius: var(--radius);
+}
+
+.doc-sub-head-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.doc-sub-head-bar h4 {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--c-text-2);
+}
+
+.doc-sub-row {
+  padding: 12px 0 4px;
+  border-top: 1px dashed var(--c-border-weak);
+}
+
+.doc-sub-row:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+
+.doc-sub-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.doc-sub-title {
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+/* ---------------------------------------------------------------- 单据配置 */
+
+.doc-cfg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.doc-cfg-label {
+  flex-shrink: 0;
+  width: 96px;
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.doc-cfg-input {
+  width: 260px;
+}
+
+.doc-map {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--c-border-weak);
+  border-radius: var(--radius);
+}
+
+.doc-map-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.doc-map-head h3 {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.doc-map-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.doc-map-target {
+  flex-shrink: 0;
+  width: 140px;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--c-text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-map-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-sub-cfg-list {
+  margin-top: 14px;
+}
+
+.doc-sub-cfg {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--c-border-weak);
+  border-radius: var(--radius);
+  background: #fafbfc;
+}
+
+.doc-sub-cfg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.doc-sub-cfg-head h3 {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--c-text-2);
+}
+
 /* ---------------------------------------------------------------- 窄屏适配 */
 
 @media (max-width: 900px) {
@@ -1361,5 +1533,19 @@ p.cfg-hint {
     width: 100%;
     max-height: 92vh;
     border-radius: 12px 12px 0 0;
+  }
+
+  .doc-cfg-row,
+  .doc-map-row {
+    flex-wrap: wrap;
+  }
+
+  .doc-cfg-label,
+  .doc-map-target {
+    width: 100%;
+  }
+
+  .doc-cfg-input {
+    width: 100%;
   }
 }

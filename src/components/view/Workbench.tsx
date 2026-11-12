@@ -5,6 +5,7 @@ import type { FieldMetaLite, FilterItem, PluginData, RecordRow } from '../../typ
 import { visibleFieldIds } from '../../utils/configOps';
 import { formatCellValue } from '../../utils/valueConverter';
 import { loadViewMeta, listSelectOptions, type SelectOptionLite } from '../../services/baseService';
+import { docReady } from '../../services/docService';
 import { clearDraft, loadDraft } from '../../services/draftService';
 import {
   addRecord,
@@ -16,6 +17,7 @@ import {
 } from '../../services/recordService';
 import { RecordDetail } from './RecordDetail';
 import { RecordForm } from '../form/RecordForm';
+import { DocForm } from '../form/DocForm';
 
 const FT = FieldType as any;
 const PAGE_SIZE = 50;
@@ -96,6 +98,8 @@ export function Workbench({ config }: Props) {
 
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<{ mode: 'create' | 'edit' } | null>(null);
+  /** 主子表单据新增页（配置了单据后可用） */
+  const [docOpen, setDocOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   /** 首屏列表就绪的数据表 id：草稿恢复要等列表就绪，避免恢复结果被首屏刷新覆盖 */
   const [readyTableId, setReadyTableId] = useState('');
@@ -609,6 +613,11 @@ export function Workbench({ config }: Props) {
             {selected ? (
               <Button onClick={() => setForm({ mode: 'edit' })}>编辑</Button>
             ) : null}
+            {docReady(config.doc) ? (
+              <Button theme="light" onClick={() => setDocOpen(true)}>
+                新增{config.doc?.name?.trim() || '单据'}
+              </Button>
+            ) : null}
             <Button theme="solid" type="primary" onClick={() => setForm({ mode: 'create' })}>
               新增记录
             </Button>
@@ -630,6 +639,20 @@ export function Workbench({ config }: Props) {
         onCancel={() => setForm(null)}
         onSubmit={handleSubmit}
       />
+
+      {config.doc?.enabled ? (
+        <DocForm
+          open={docOpen}
+          config={config}
+          fields={fields}
+          onCancel={() => setDocOpen(false)}
+          onSaved={(msg) => {
+            Toast.success(msg);
+            setDocOpen(false);
+            void fetchPage(true);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
