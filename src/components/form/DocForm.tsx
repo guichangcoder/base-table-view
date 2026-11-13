@@ -172,7 +172,17 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
   /** 主表上的合同关联字段（合同选择器 + 保存时写关联值） */
   const contractField = doc?.contractFieldId ? fieldMap.get(doc.contractFieldId) : undefined;
 
-  /** 主表可填字段：按分组顺序展开，去掉合同关联字段与其它关联字段 */
+  /** 展示分组内的字段 id（用于区分「仅带出」的额外字段） */
+  const groupFieldIds = useMemo(() => {
+    const s = new Set<string>();
+    config.groups.forEach((g) => visibleFieldIds(config, g).forEach((id) => s.add(id)));
+    return s;
+  }, [config]);
+
+  /**
+   * 主表可填字段：展示分组内可见字段 + 显式配置了来源映射的额外字段。
+   * 后者即使没有加入展示分组，也要出现在单据表单里按来源带出（只读）。
+   */
   const mainDisplay = useMemo(() => {
     const ids: string[] = [];
     const seen = new Set<string>();
@@ -184,11 +194,19 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
         }
       }),
     );
+    (doc?.main?.items ?? []).forEach((it) => {
+      if (!it?.to || !it.from || seen.has(it.to)) return;
+      seen.add(it.to);
+      ids.push(it.to);
+    });
     return ids
       .filter((id) => id !== doc?.contractFieldId)
       .map((id) => fieldMap.get(id))
-      .filter((f): f is FieldMetaLite => !!f && isEditableType(f.type) && !isLinkType(f.type));
-  }, [config, fieldMap, doc?.contractFieldId]);
+      .filter(
+        (f): f is FieldMetaLite =>
+          !!f && !f.unsupported && isEditableType(f.type) && !isLinkType(f.type),
+      );
+  }, [config, fieldMap, doc?.contractFieldId, doc?.main]);
 
   /** 每张子表的可填字段 */
   const subTargetMap = useMemo(() => {
@@ -811,6 +829,11 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
                           <label className="form-label">
                             {fieldLabel(field, cfgMap.get(field.id))}
                             {required ? <i className="field-required">*</i> : null}
+                            {groupFieldIds.has(field.id) ? null : (
+                              <Tag size="small" color="blue">
+                                仅带出
+                              </Tag>
+                            )}
                           </label>
                           {auto ? (
                             <div className="form-readonly">

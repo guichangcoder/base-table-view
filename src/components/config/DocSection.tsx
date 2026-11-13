@@ -299,7 +299,10 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
           <div className="doc-map">
             <div className="doc-map-head">
               <h3>合同 / 客户 → 主表 带出字段</h3>
-              <span className="cfg-hint">默认按合同字段同名自动带出，可逐项改为指定来源或不带出</span>
+              <span className="cfg-hint">
+                默认按合同字段同名自动带出，可逐项改为指定来源或不带出；
+                已指定来源但未加入展示分组的字段，也会出现在单据表单中按来源带出（只读）
+              </span>
             </div>
             {!contractTableId ? (
               <div className="cfg-empty">请先选择可用的合同关联字段</div>
