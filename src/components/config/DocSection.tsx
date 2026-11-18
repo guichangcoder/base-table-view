@@ -54,15 +54,14 @@ function currentSource(mapping: DocMapping | undefined, targetId: string): strin
   return item.from ? `${item.src}|${item.from}` : NONE;
 }
 
-/** 可带出的来源字段：含查找引用 / 公式等只读字段（值可被引用），排除关联与按钮 */
+/** 可带出的来源字段：含查找引用 / 公式等只读字段与关联字段（取其展示文本），排除按钮 */
 function sourceCandidates(list: FieldMetaLite[], excludeId?: string): FieldMetaLite[] {
   return list.filter(
     (f) =>
       f.id !== excludeId &&
       !f.unsupported &&
       !f.isButton &&
-      !isLinkType(f.type) &&
-      (isEditableType(f.type) || isReadonlyType(f.type)),
+      (isEditableType(f.type) || isReadonlyType(f.type) || isLinkType(f.type)),
   );
 }
 
@@ -401,7 +400,7 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
                     <div className="doc-map-head">
                       <h3>带出字段</h3>
                       <span className="cfg-hint">
-                        默认按主表字段同名自动带出，可逐项改为主表 / 合同 / 客户字段（含查找引用等只读字段）或不带出；
+                        默认按主表字段同名自动带出，可逐项改为主表 / 合同 / 客户字段（含查找引用等只读字段、关联字段取其展示文本）或不带出；
                         多值来源配到单选目标时，每个值生成一行
                       </span>
                     </div>

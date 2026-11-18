@@ -70,11 +70,13 @@ export function isButtonType(type: unknown): boolean {
 /**
  * 「按钮」字段判定（多信号）。
  * 依次判断：
- * 1. property 为 `{ color: number, title: string }` —— 按钮字段独有，最可靠；
- * 2. 类型值是 3001 或字符串 "Button"；
- * 3. 类型值是 SDK 未建模的非 0 数值（宿主可能用与开放接口不同的类型值）。
+ * 1. uiType 为 "Button" —— JSSDK 的 IFieldMeta 用 uiType 表达按钮，type 常为 0（NotSupport）；
+ * 2. property 为 `{ color: number, title: string }` —— 按钮字段独有，最可靠；
+ * 3. 类型值是 3001 或字符串 "Button"；
+ * 4. 类型值是 SDK 未建模的非 0 数值（宿主可能用与开放接口不同的类型值）。
  */
-function detectButton(rawType: unknown, prop: any): boolean {
+function detectButton(rawType: unknown, prop: any, uiType?: unknown): boolean {
+  if (String(uiType) === 'Button') return true;
   if (prop && (typeof prop.title === 'string' || typeof prop.color === 'number')) return true;
   if (isButtonType(rawType)) return true;
   const n = Number(rawType);
@@ -153,7 +155,7 @@ function mapFieldMeta(m: any): FieldMetaLite {
       prop = {};
     }
   }
-  const isButton = detectButton(m.type, prop);
+  const isButton = detectButton(m.type, prop, m.uiType ?? m.ui_type);
   if (!isButton && !KNOWN_TYPE_VALUES.has(type)) {
     // 宿主返回了 SDK 未建模的类型：把原始元信息打出来，便于定位（如按钮字段）
     console.info('[baseService] 未识别的字段类型', { name: m.name, rawType: m.type, meta: m });

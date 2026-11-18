@@ -69,6 +69,13 @@ function buildCondition(item: FilterItem, field?: FieldMetaLite): any | null {
     return { ...base, operator, value: ts };
   }
 
+  // 关联字段（单向/双向）：value 必须是记录 id 的字符串数组
+  if (isLinkType(type)) {
+    const v = String(item.value ?? '').trim();
+    if (!v) return null;
+    return { ...base, operator: 'contains', value: [v] };
+  }
+
   if (type === FT.SingleSelect) {
     const id = optionIdOf(field, item.value);
     if (op === 'contains') return { ...base, operator: 'contains', value: id };

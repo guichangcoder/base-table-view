@@ -4,7 +4,7 @@ import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, FilterItem, PluginData, RecordRow } from '../../types';
 import { visibleFieldIds } from '../../utils/configOps';
 import { formatCellValue } from '../../utils/valueConverter';
-import { loadViewMeta, listSelectOptions, type SelectOptionLite } from '../../services/baseService';
+import { isTextType, loadViewMeta, listSelectOptions, type SelectOptionLite } from '../../services/baseService';
 import { docReady } from '../../services/docService';
 import { clearDraft, loadDraft } from '../../services/draftService';
 import {
@@ -23,6 +23,20 @@ const FT = FieldType as any;
 const PAGE_SIZE = 50;
 /** 前端累计展示上限：万级大表不能无限追加 DOM，超出后引导用户用筛选/搜索收窄 */
 const MAX_LOADED = 1000;
+
+/** 可用于筛选的字段类型（与配置面板、recordService.buildCondition 保持一致） */
+const FILTERABLE_TYPES = [
+  FT.Text,
+  FT.Number,
+  FT.SingleSelect,
+  FT.MultiSelect,
+  FT.DateTime,
+  FT.User,
+  FT.Phone,
+  FT.Email,
+  FT.Url,
+  FT.Checkbox,
+].filter((v) => typeof v === 'number');
 
 function isNumberType(t?: number): boolean {
   return t === FT.Number || t === FT.Currency || t === FT.Progress || t === FT.Rating;
@@ -114,6 +128,14 @@ export function Workbench({ config }: Props) {
 
   const fieldMap = useMemo(() => new Map(fields.map((f) => [f.id, f])), [fields]);
 
+  // 未在配置面板勾选时回退到全表可用字段，避免「控件在但点了没反应」
+  const effectiveFilterIds = config.filterFieldIds.length
+    ? config.filterFieldIds
+    : fields.filter((f) => !f.unsupported && !f.isButton && FILTERABLE_TYPES.includes(f.type)).map((f) => f.id);
+  const effectiveSearchIds = config.searchFieldIds.length
+    ? config.searchFieldIds
+    : fields.filter((f) => !f.unsupported && !f.isButton && isTextType(f.type)).map((f) => f.id);
+
   // 1) 元信息
   useEffect(() => {
     const tableId = config.tableId;
@@ -146,7 +168,7 @@ export function Workbench({ config }: Props) {
   useEffect(() => {
     if (!config.tableId) return;
     let alive = true;
-    config.filterFieldIds.forEach((id) => {
+    effectiveFilterIds.forEach((id) => {
       const type = fieldMap.get(id)?.type;
       if (type !== FT.User || userOptions[id]) return;
       listUserCandidates(config.tableId as string, id)
@@ -159,13 +181,13 @@ export function Workbench({ config }: Props) {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.tableId, config.filterFieldIds.join(','), fields]);
+  }, [config.tableId, effectiveFilterIds.join(','), fields]);
 
   // 3) 筛选字段里单选/多选的原生选项
   useEffect(() => {
     if (!config.tableId) return;
     let alive = true;
-    config.filterFieldIds.forEach((id) => {
+    effectiveFilterIds.forEach((id) => {
       const type = fieldMap.get(id)?.type;
       if ((type !== FT.SingleSelect && type !== FT.MultiSelect) || selectOptions[id]) return;
       listSelectOptions(config.tableId as string, id)
@@ -178,11 +200,11 @@ export function Workbench({ config }: Props) {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.tableId, config.filterFieldIds.join(','), fields]);
+  }, [config.tableId, effectiveFilterIds.join(','), fields]);
 
   const activeFilters = useMemo<FilterItem[]>(
     () =>
-      config.filterFieldIds
+      effectiveFilterIds
         .filter((id) => fieldMap.has(id))
         .map((id) => ({
           fieldId: id,
@@ -191,7 +213,7 @@ export function Workbench({ config }: Props) {
         }))
         .filter((it) => it.value !== '' || it.operator === 'isNotEmpty'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config.filterFieldIds.join(','), filterOps, filterValues, fields],
+    [effectiveFilterIds.join(','), filterOps, filterValues, fields],
   );
 
   const activeKey = `${keyword}|${JSON.stringify(activeFilters)}`;
@@ -222,7 +244,7 @@ export function Workbench({ config }: Props) {
         pageToken: reset ? undefined : pageToken,
         filterItems: applied.filters,
         keyword: applied.keyword,
-        searchFieldIds: config.searchFieldIds,
+        searchFieldIds: effectiveSearchIds,
         fields,
       });
       // 期间筛选/搜索又变了，当前响应已过期，直接丢弃
@@ -385,7 +407,7 @@ export function Workbench({ config }: Props) {
     );
   }
 
-  const filterFields = config.filterFieldIds
+  const filterFields = effectiveFilterIds
     .map((id) => fieldMap.get(id))
     .filter((f): f is FieldMetaLite => !!f);
 
@@ -396,9 +418,9 @@ export function Workbench({ config }: Props) {
   const toggleFilters = () => {
     if (!filterFields.length) {
       Toast.warning(
-        config.filterFieldIds.length
-          ? '筛选字段尚未加载完成，请点「刷新」后重试'
-          : '尚未配置筛选字段：请进入配置面板的「4. 筛选与搜索」勾选可用作筛选的字段',
+        fields.length
+          ? '当前数据表没有可用于筛选的字段'
+          : '筛选字段尚未加载完成，请点「刷新」后重试',
       );
       return;
     }
@@ -406,9 +428,13 @@ export function Workbench({ config }: Props) {
   };
 
   const onKeywordChange = (v: string) => {
-    if (!config.searchFieldIds.length && v && !searchHintRef.current) {
+    if (!effectiveSearchIds.length && v && !searchHintRef.current) {
       searchHintRef.current = true;
-      Toast.warning('尚未配置搜索字段：请进入配置面板的「4. 筛选与搜索」勾选文本类字段');
+      Toast.warning(
+        fields.length
+          ? '当前数据表没有文本类字段，无法关键词搜索'
+          : '搜索字段尚未加载完成，请点「刷新」后重试',
+      );
     }
     setKeyword(v);
   };
@@ -515,7 +541,7 @@ export function Workbench({ config }: Props) {
 
         <div className="wb-toolbar">
           <Input
-            placeholder={config.searchFieldIds.length ? '搜索关键词' : '未配置搜索字段（仍可输入）'}
+            placeholder={effectiveSearchIds.length ? '搜索关键词' : '当前数据表没有可搜索的文本字段'}
             value={keyword}
             showClear
             onChange={onKeywordChange}

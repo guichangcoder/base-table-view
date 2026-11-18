@@ -13,7 +13,7 @@ import type {
 } from '../types';
 import { getTableName, isEditableType, isLinkType, listFieldsCached } from './baseService';
 import { extractLinkIds, getRecordById, getRecordsByIds } from './recordService';
-import { isEmptyValue } from '../utils/valueConverter';
+import { formatCellValue, isEmptyValue } from '../utils/valueConverter';
 
 function errMsg(e: unknown): string {
   return String((e as Error)?.message ?? e);
@@ -189,7 +189,9 @@ export function resolveMapping(
       from = named[defaultSrc].get(to.name);
     }
     if (!from) return;
-    if (isLinkType(from.type) !== isLinkType(to.type)) return;
+    // 目标为关联字段时来源必须是关联字段（不能把文本值写进关联字段）；
+    // 反向允许：关联来源的展示文本可带出到文本 / 单选等目标。
+    if (isLinkType(to.type) && !isLinkType(from.type)) return;
     out.push({ to, src, from });
   });
   return out;
@@ -240,7 +242,10 @@ export function collectAuto(
     const row = p.src === 'hop1' ? data.hop1 : p.src === 'hop2' ? data.hop2 : undefined;
     if (!row) return;
     const raw = row[p.from.id];
-    if (!isEmptyValue(raw)) out[p.to.id] = raw;
+    if (isEmptyValue(raw)) return;
+    // 关联来源带出到非关联目标时取其展示文本（关联单元格值是 { text, recordIds }）
+    out[p.to.id] =
+      isLinkType(p.from.type) && !isLinkType(p.to.type) ? formatCellValue(raw, p.from) : raw;
   });
   return out;
 }

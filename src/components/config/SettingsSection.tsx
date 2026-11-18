@@ -1,7 +1,7 @@
 import { Checkbox, Tag } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, PluginData } from '../../types';
-import { toggleId, visibleFieldIds } from '../../utils/configOps';
+import { toggleId } from '../../utils/configOps';
 import { isTextType } from '../../services/baseService';
 
 const FT = FieldType as any;
@@ -28,12 +28,11 @@ interface Props {
 
 /** 筛选字段 / 关键词搜索字段配置 */
 export function SettingsSection({ config, fields, onChange }: Props) {
-  // 只有真正出现在前端页面上的字段才允许作为筛选 / 搜索入口
-  const shownIds = new Set(config.groups.flatMap((g) => visibleFieldIds(config, g)));
-  const shown = fields.filter((f) => shownIds.has(f.id) && !f.unsupported);
+  // 候选取全表可用字段：不要求字段已加入展示分组，否则无分组时无从勾选
+  const usable = fields.filter((f) => !f.unsupported && !f.isButton);
 
-  const filterable = shown.filter((f) => FILTERABLE_TYPES.includes(f.type));
-  const searchable = shown.filter((f) => isTextType(f.type));
+  const filterable = usable.filter((f) => FILTERABLE_TYPES.includes(f.type));
+  const searchable = usable.filter((f) => isTextType(f.type));
 
   const setFilter = (fieldId: string) =>
     onChange({ ...config, filterFieldIds: toggleId(config.filterFieldIds, fieldId) });
@@ -55,7 +54,7 @@ export function SettingsSection({ config, fields, onChange }: Props) {
       <div className="pick-block">
         <div className="pick-title">筛选字段</div>
         {filterable.length === 0 ? (
-          <div className="cfg-empty">当前分组里还没有可用于筛选的字段</div>
+          <div className="cfg-empty">当前数据表没有可用于筛选的字段</div>
         ) : (
           <div className="pick-list">
             {filterable.map((f) => (
@@ -80,7 +79,7 @@ export function SettingsSection({ config, fields, onChange }: Props) {
           </Tag>
         </div>
         {searchable.length === 0 ? (
-          <div className="cfg-empty">当前分组里没有文本类字段，无法提供关键词搜索</div>
+          <div className="cfg-empty">当前数据表没有文本类字段，无法提供关键词搜索</div>
         ) : (
           <div className="pick-list">
             {searchable.map((f) => (

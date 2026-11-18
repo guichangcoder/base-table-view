@@ -130,6 +130,22 @@ function displayText(
   return formatCellValue(value, field) || String(value);
 }
 
+/** 单选 / 多选目标值归一：把「名称」按目标选项映射成选项 id（关联来源带出的是展示文本） */
+function optionIdValue(value: unknown, field: FieldMetaLite, options: SelectOptionLite[]): unknown {
+  if (field.type !== FT.SingleSelect && field.type !== FT.MultiSelect) return value;
+  if (!options.length || value === undefined || value === null || value === '') return value;
+  const toId = (x: unknown): string => {
+    const s = String(
+      x && typeof x === 'object' ? ((x as any).id ?? (x as any).text ?? '') : (x ?? ''),
+    );
+    if (!s) return '';
+    const hit = options.find((o) => o.id === s || o.name === s);
+    return hit ? hit.id : s;
+  };
+  if (field.type === FT.SingleSelect) return toId(Array.isArray(value) ? value[0] : value);
+  return (Array.isArray(value) ? value : [value]).map(toId).filter(Boolean);
+}
+
 /** 多值来源中的单个值 → 目标单选字段可用值（优先按名称匹配目标选项） */
 function cellItem(raw: unknown): { id: string; name: string } {
   if (raw === null || raw === undefined) return { id: '', name: '' };
@@ -215,7 +231,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
     return m;
   }, [meta]);
 
-  /** 可作为「主表来源」的字段：含查找引用等只读字段（值可被引用），口径与配置面板一致 */
+  /** 可作为「主表来源」的字段：含查找引用等只读字段与关联字段（取其展示文本），口径与配置面板一致 */
   const mainSourceFields = useMemo(
     () =>
       fields.filter(
@@ -223,8 +239,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
           f.id !== doc?.contractFieldId &&
           !f.unsupported &&
           !f.isButton &&
-          !isLinkType(f.type) &&
-          (isEditableType(f.type) || isReadonlyType(f.type)),
+          (isEditableType(f.type) || isReadonlyType(f.type) || isLinkType(f.type)),
       ),
     [fields, doc?.contractFieldId],
   );
@@ -387,6 +402,10 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
   const mainValueOf = (row: MainRowState, field: FieldMetaLite): FormValue =>
     row.auto[field.id] !== undefined ? toFormValue(row.auto[field.id], field) : row.values[field.id];
 
+  /** 来源为关联字段、目标非关联时取展示文本（关联单元格值是 { text, recordIds }） */
+  const sourceValueFor = (raw: unknown, from: FieldMetaLite, to: FieldMetaLite): unknown =>
+    isLinkType(from.type) && !isLinkType(to.type) ? formatCellValue(raw, from) : raw;
+
   /** 子表字段有效值：有映射且来源有值 → 自动带出（只读）；否则取用户输入 */
   const subValueOf = (
     row: MainRowState,
@@ -397,8 +416,18 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
     if (!resolved) return { value: sub.values[field.id], auto: false };
     if (resolved.src === 'hop1' || resolved.src === 'hop2') {
       const rawRow = resolved.src === 'hop1' ? row.sourceData?.hop1 : row.sourceData?.hop2;
-      const raw = rawRow?.[resolved.from.id];
+      const raw = sourceValueFor(rawRow?.[resolved.from.id], resolved.from, field);
       if (!isEmptyValue(raw)) return { value: toFormValue(raw, field), auto: true };
+      return { value: sub.values[field.id], auto: false };
+    }
+    // main：来源为关联字段时取主表关联记录的展示文本
+    if (isLinkType(resolved.from.type) && !isLinkType(field.type)) {
+      const rawMain =
+        row.auto[resolved.from.id] !== undefined
+          ? row.auto[resolved.from.id]
+          : row.values[resolved.from.id];
+      const text = formatCellValue(rawMain, resolved.from);
+      if (text) return { value: toFormValue(text, field), auto: true };
       return { value: sub.values[field.id], auto: false };
     }
     // main：取主表当前记录的生效值（含主表带出值）
@@ -545,7 +574,11 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
         // 主表：带出字段以系统值为准，其余取用户输入
         const mainPayload: Record<string, unknown> = {};
         mainDisplay.forEach((f) => {
-          const built = buildFieldValue(f.type, mainValueOf(row, f), f.linkTableId);
+          const built = buildFieldValue(
+            f.type,
+            optionIdValue(mainValueOf(row, f), f, optionsOf(config.tableId, f)),
+            f.linkTableId,
+          );
           if (built !== undefined) mainPayload[f.id] = built;
         });
         if (contractField && row.contractId) {
@@ -565,7 +598,11 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
               const resolved = subResolved.get(sm.tableId)?.get(f.id);
               const built = buildFieldValue(
                 f.type,
-                subFieldValue(row, sub, f, resolved).value,
+                optionIdValue(
+                  subFieldValue(row, sub, f, resolved).value,
+                  f,
+                  optionsOf(sm.tableId, f),
+                ),
                 f.linkTableId,
               );
               if (built !== undefined) payload[f.id] = built;
