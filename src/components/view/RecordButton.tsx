@@ -1,18 +1,21 @@
 import { useEffect } from 'react';
 import { Button, Toast } from '@douyinfe/semi-ui';
 import type { FieldMetaLite } from '../../types';
-import { getBaseToken, getBridge } from '../../services/appContext';
+import { getBaseToken, getBridge, getUi } from '../../services/appContext';
 import { getTableCached } from '../../services/baseService';
 import { HOST_TIMEOUT, METADATA_TIMEOUT, withTimeout } from '../../utils/timeout';
 
 /**
  * 数据表「按钮」字段在前端的呈现。
  *
- * JSSDK 没有「触发按钮动作」的接口，按钮绑定的工作流只能由数据表自身执行。
- * 应用模式宿主不支持 ui.showRecordDetailDialog / ui.switchToTable 这类 UI 能力
- * （宿主未实现时默认实现直接抛 NotSupportedError），此前点击会触发这些宿主 UI 调用，
- * 实测会导致插件 iframe 被重建而整页白屏。因此这里不再调用任何宿主 UI 接口，
- * 只做一件事：在新标签页打开该记录在真实多维表格中的卡片，让用户点真实按钮。
+ * JSSDK 没有「触发按钮动作 / 执行工作流」的接口，按钮动作只能由数据表自身执行，
+ * 因此点击时调用宿主原生 UI，把用户带到这个真实按钮上：
+ *   1. ui.showFieldValueEditor —— 打开该按钮字段的值编辑器，等同于在数据表里点这个按钮；
+ *   2. ui.showRecordDetailDialog —— 打开原生记录详情（尽量只显示该按钮字段），在其中点击按钮；
+ *   3. bridge.getBitableUrl —— 前两者都不可用时，新标签页打开该记录的真实数据表卡片；
+ *   4. 全都不行时给出明确提示，不静默失败。
+ * 每一步都带超时与异常兜底：宿主未实现该接口时会抛 NotSupportedError 或 Promise 永不 settle，
+ * 否则表现为「点击没反应」。
  */
 
 /** 按钮配色索引（与数据表按钮调色板一致：1 红 2 橙 3 黄 4 绿 5 蓝 6 紫） */
@@ -32,7 +35,7 @@ function buttonColor(color?: number): string {
   return BUTTON_COLORS[color] ?? DEFAULT_BUTTON_COLOR;
 }
 
-/** 每个数据表的首个视图 id 缓存：生成数据表链接需要 tableId + viewId */
+/** 每个数据表的首个视图 id 缓存：宿主 UI 与生成数据表链接都需要 viewId */
 const viewIdCache = new Map<string, string>();
 
 async function firstViewId(tableId: string): Promise<string> {
@@ -54,6 +57,43 @@ async function firstViewId(tableId: string): Promise<string> {
   return id;
 }
 
+/** 调用宿主原生 UI，返回 true 表示已经打开真实按钮、用户可在此处点击执行 */
+async function tryHostButtonUi(
+  tableId: string,
+  recordId: string,
+  fieldId: string,
+  viewId: string,
+): Promise<boolean> {
+  const ui = getUi() as any;
+  if (!ui) return false;
+
+  const call = async (label: string, fn: () => any): Promise<boolean> => {
+    try {
+      const ok = await withTimeout(Promise.resolve(fn()), HOST_TIMEOUT, label);
+      return ok !== false;
+    } catch {
+      return false;
+    }
+  };
+
+  // 1) 该按钮字段的值编辑器：最接近「在数据表里点这个按钮」
+  if (viewId && typeof ui.showFieldValueEditor === 'function') {
+    if (await call('showFieldValueEditor', () => ui.showFieldValueEditor({ tableId, viewId, recordId, fieldId }))) {
+      return true;
+    }
+  }
+  // 2) 原生记录详情（只显示该按钮字段），在其中点击真实按钮
+  if (typeof ui.showRecordDetailDialog === 'function') {
+    if (await call('showRecordDetailDialog', () => ui.showRecordDetailDialog({ tableId, recordId, fieldIdList: [fieldId] }))) {
+      return true;
+    }
+    if (await call('showRecordDetailDialog', () => ui.showRecordDetailDialog({ tableId, recordId }))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** 兜底：getBitableUrl 不可用时，用 baseToken + 宿主域名自行拼一个数据表链接 */
 function manualUrl(tableId: string, viewId: string, recordId: string): string {
   const baseToken = getBaseToken();
@@ -71,12 +111,8 @@ function manualUrl(tableId: string, viewId: string, recordId: string): string {
   return `${origin}/base/${baseToken}?${query.toString()}`;
 }
 
-/**
- * 在新标签页打开该记录在真实多维表格中的卡片。
- * 成功返回 true（此时用户可在原表中点击真实按钮）。
- */
-async function openRealRecord(tableId: string, recordId: string): Promise<boolean> {
-  const viewId = await firstViewId(tableId);
+/** 在新标签页打开该记录在真实多维表格中的卡片（保证可用的一级兜底） */
+async function openRealRecord(tableId: string, viewId: string, recordId: string): Promise<boolean> {
   let url = '';
   try {
     const bridge = getBridge() as any;
@@ -130,11 +166,22 @@ export function RecordButton({ tableId, recordId, field, title }: Props) {
       Toast.info('请先保存记录，保存后即可点击按钮执行');
       return;
     }
-    if (await openRealRecord(tableId, recordId)) {
+
+    const viewId = await firstViewId(tableId);
+
+    // 1) 宿主原生按钮 UI：点它等同于在数据表里点这个按钮
+    if (await tryHostButtonUi(tableId, recordId, field.id, viewId)) {
+      Toast.info('已打开数据表原生按钮界面，请点击其中的按钮执行');
+      return;
+    }
+
+    // 2) 兜底：新标签页打开真实数据表中的该记录
+    if (await openRealRecord(tableId, viewId, recordId)) {
       Toast.info('已在新标签页打开该记录：请点击其中的按钮执行');
       return;
     }
-    Toast.warning('无法生成数据表链接，请手动回到多维表格中点击该按钮');
+
+    Toast.warning('当前宿主无法打开数据表，请手动回到多维表格中点击该按钮');
   };
 
   return (
