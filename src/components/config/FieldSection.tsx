@@ -1,9 +1,11 @@
-import { Checkbox, Input, Select, Tag } from '@douyinfe/semi-ui';
+import { useState } from 'react';
+import { Button, Checkbox, Input, Select, Tag } from '@douyinfe/semi-ui';
 import type { FieldConfig, FieldMetaLite, PluginData } from '../../types';
 import { setFieldConfig, isButtonField } from '../../utils/configOps';
 import { EMPHASIS_COLORS } from '../../utils/palette';
 import { FieldType } from '@lark-base-open/js-sdk';
 import { BUTTON_TYPE } from '../../services/baseService';
+import { ButtonActionDialog } from './ButtonActionDialog';
 
 const FT = FieldType as any;
 
@@ -57,6 +59,8 @@ function emphasisColor(cfg?: FieldConfig): string {
 export function FieldSection({ config, fields, onChange }: Props) {
   const cfgMap = new Map(config.fields.map((f) => [f.fieldId, f]));
   const list = fields.filter((f) => !f.unsupported);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editingField = editingId ? list.find((f) => f.id === editingId) : undefined;
 
   const patch = (fieldId: string, p: Partial<FieldConfig>) => {
     onChange(setFieldConfig(config, fieldId, p));
@@ -88,7 +92,11 @@ export function FieldSection({ config, fields, onChange }: Props) {
         <br />
         字段名后的类型标签可点击：切成「按钮」表示该字段在前端渲染成按钮（用于数据表里的按钮字段），再点一下恢复按普通字段展示。
         <br />
-        按钮字段可在最后一列填「自动化 Webhook 地址」：在数据表里新建自动化流程，触发条件选「接收到 webhook 时」，复制其唯一地址填入。之后在插件里点击该按钮，会把本记录的全部字段值以 JSON 形式 POST 给该流程（在流程的「输出设置」里解析请求体后，即可在后续步骤中引用这些字段）：文本值在 fields 里；人员、附件类字段另外在 raw 里带上原始结构（附件含 token 和临时下载链接 url）。注意：该流程请勿开启「凭证校验」和「IP 白名单」，否则浏览器发出的请求无法通过校验。
+        按钮字段可在最后一列点「配置」打开「按钮动作配置」弹窗：请求方法、请求地址、请求参数、请求头、请求体都可配置，形式对齐数据表工作流里的「发送 HTTP 请求」节点。
+        <br />
+        请求体默认「自动发送全部字段」：把本记录的全部字段值以 JSON 的 fields 发出，人员、附件类字段另外在 raw 里带上原始结构（附件含 token 和临时下载链接 url），与旧版行为一致；也可改为「自定义模板」，用 {'{{字段名}}'} 引用本条记录的任意字段。
+        <br />
+        浏览器限制：自定义请求头会触发跨域预检，目标服务必须允许跨域；工作流/自动化请勿开启「凭证校验」和「IP 白名单」，否则浏览器发出的请求无法通过校验。
       </p>
 
       <div className="field-table">
@@ -101,7 +109,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
           <div>加粗</div>
           <div>字体颜色</div>
           <div>底色高亮</div>
-          <div>按钮触发</div>
+          <div>按钮动作</div>
         </div>
 
         {list.map((field) => {
@@ -208,18 +216,34 @@ export function FieldSection({ config, fields, onChange }: Props) {
               </div>
               <div>
                 {isBtn ? (
-                  <Input
+                  <Button
                     size="small"
-                    value={cfg?.webhookUrl ?? ''}
-                    placeholder="自动化 Webhook 地址"
-                    onChange={(v) => patch(field.id, { webhookUrl: v.trim() ? v : undefined })}
-                  />
+                    theme={cfg?.http?.url ? 'light' : 'borderless'}
+                    type="primary"
+                    onClick={() => setEditingId(field.id)}
+                  >
+                    {cfg?.http?.url ? `已配置 ${cfg.http.method}` : '配置'}
+                  </Button>
                 ) : null}
               </div>
             </div>
           );
         })}
       </div>
+
+      {editingField ? (
+        <ButtonActionDialog
+          visible
+          field={editingField}
+          value={cfgMap.get(editingField.id)?.http}
+          fields={list}
+          onCancel={() => setEditingId(null)}
+          onOk={(next) => {
+            patch(editingField.id, { http: next });
+            setEditingId(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

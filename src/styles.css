@@ -637,6 +637,74 @@ p.cfg-hint {
   border-radius: 3px;
 }
 
+/* ---------------------------------------------------------------- 按钮动作配置弹窗 */
+
+.btn-action {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.btn-action-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-action-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--c-text-2);
+}
+
+.btn-action-inline {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.btn-action-tip {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--c-text-3);
+}
+
+.btn-action-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-action-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.btn-action-footer-right {
+  display: flex;
+  gap: 8px;
+}
+
+.kv-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kv-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.kv-sep {
+  color: var(--c-text-3);
+}
+
 /* ---------------------------------------------------------------- 筛选 / 搜索字段选择 */
 
 .pick-block {

@@ -1,11 +1,14 @@
 import {
   CONFIG_VERSION,
   emptyConfig,
+  type ButtonHttpConfig,
   type DocConfig,
   type DocMapItem,
   type DocMapping,
   type DocSource,
   type DocSubConfig,
+  type HttpBodyFormat,
+  type HttpPair,
   type PluginData,
   type FieldConfig,
   type GroupConfig,
@@ -26,13 +29,45 @@ export function estimateConfigBytes(data: unknown): number {
   }
 }
 
+const HTTP_BODY_FORMATS: HttpBodyFormat[] = ['json', 'urlencoded', 'text'];
+
+function compactPairs(pairs?: HttpPair[]): HttpPair[] {
+  return (pairs ?? [])
+    .filter((p) => !!p && String(p.k ?? '').trim())
+    .map((p) => ({ k: String(p.k).trim(), v: String(p.v ?? '') }));
+}
+
+/** 按钮 HTTP 配置瘦身：地址为空视为未配置，整块丢弃 */
+function compactHttp(h?: ButtonHttpConfig): ButtonHttpConfig | undefined {
+  const url = (h?.url ?? '').trim();
+  if (!url) return undefined;
+  const template = h?.bodyMode === 'template';
+  const out: ButtonHttpConfig = {
+    method: (h?.method || 'POST').toUpperCase(),
+    url,
+    bodyMode: template ? 'template' : 'auto',
+  };
+  const params = compactPairs(h?.params);
+  if (params.length) out.params = params;
+  const headers = compactPairs(h?.headers);
+  if (headers.length) out.headers = headers;
+  if (template) {
+    out.bodyFormat = HTTP_BODY_FORMATS.includes(h?.bodyFormat as HttpBodyFormat)
+      ? (h?.bodyFormat as HttpBodyFormat)
+      : 'json';
+    out.body = String(h?.body ?? '');
+  }
+  return out;
+}
+
 function compactField(f: FieldConfig): FieldConfig {
   const out: FieldConfig = { fieldId: f.fieldId, visible: !!f.visible };
   if (f.required) out.required = true;
   if (f.readonly) out.readonly = true;
   if (f.label && f.label.trim()) out.label = f.label.trim();
   if (f.asButton !== undefined) out.asButton = !!f.asButton;
-  if (f.webhookUrl && f.webhookUrl.trim()) out.webhookUrl = f.webhookUrl.trim();
+  const http = compactHttp(f.http);
+  if (http) out.http = http;
   if (f.emphasis) {
     const e: FieldConfig['emphasis'] = {};
     if (f.emphasis.bold) e.bold = true;
@@ -102,6 +137,44 @@ function compactDoc(d?: DocConfig): DocConfig | undefined {
   const main = compactMapping(d.main);
   if (main) out.main = main;
   return out;
+}
+
+function hydratePairs(raw: unknown): HttpPair[] {
+  if (!Array.isArray(raw)) return [];
+  const out: HttpPair[] = [];
+  raw.forEach((it) => {
+    if (!it || typeof it !== 'object') return;
+    const p = it as Partial<HttpPair>;
+    const k = typeof p.k === 'string' ? p.k.trim() : '';
+    if (!k) return;
+    out.push({ k, v: typeof p.v === 'string' ? p.v : String(p.v ?? '') });
+  });
+  return out;
+}
+
+/** 读取按钮 HTTP 配置；旧版 webhookUrl 自动升级成 POST + 自动全集 */
+function hydrateHttp(raw: unknown, legacyUrl?: unknown): ButtonHttpConfig | undefined {
+  if (raw && typeof raw === 'object') {
+    const h = raw as Partial<ButtonHttpConfig>;
+    const url = typeof h.url === 'string' ? h.url.trim() : '';
+    if (!url) return undefined;
+    const template = h.bodyMode === 'template';
+    return {
+      method: typeof h.method === 'string' && h.method.trim() ? h.method.trim().toUpperCase() : 'POST',
+      url,
+      params: hydratePairs(h.params),
+      headers: hydratePairs(h.headers),
+      bodyMode: template ? 'template' : 'auto',
+      bodyFormat: HTTP_BODY_FORMATS.includes(h.bodyFormat as HttpBodyFormat)
+        ? (h.bodyFormat as HttpBodyFormat)
+        : 'json',
+      body: template ? String(h.body ?? '') : undefined,
+    };
+  }
+  if (typeof legacyUrl === 'string' && legacyUrl.trim()) {
+    return { method: 'POST', url: legacyUrl.trim(), bodyMode: 'auto' };
+  }
+  return undefined;
 }
 
 /** 旧版（overrides/excludes）映射结构，读取时迁移成 items */
@@ -229,16 +302,19 @@ export function hydrateConfig(raw: unknown): PluginData {
     fields: Array.isArray(r.fields)
       ? r.fields
           .filter((f): f is FieldConfig => !!f && typeof f === 'object' && !!f.fieldId)
-          .map((f) => ({
-            fieldId: String(f.fieldId),
-            visible: f.visible !== false,
-            required: !!f.required,
-            readonly: !!f.readonly,
-            label: f.label ? String(f.label) : undefined,
-            asButton: typeof f.asButton === 'boolean' ? f.asButton : undefined,
-            webhookUrl: typeof f.webhookUrl === 'string' && f.webhookUrl.trim() ? f.webhookUrl.trim() : undefined,
-            emphasis: f.emphasis && typeof f.emphasis === 'object' ? { ...f.emphasis } : undefined,
-          }))
+          .map((f) => {
+            const legacy = (f as FieldConfig & { webhookUrl?: unknown }).webhookUrl;
+            return {
+              fieldId: String(f.fieldId),
+              visible: f.visible !== false,
+              required: !!f.required,
+              readonly: !!f.readonly,
+              label: f.label ? String(f.label) : undefined,
+              asButton: typeof f.asButton === 'boolean' ? f.asButton : undefined,
+              http: hydrateHttp(f.http, legacy),
+              emphasis: f.emphasis && typeof f.emphasis === 'object' ? { ...f.emphasis } : undefined,
+            };
+          })
       : [],
     filterFieldIds: Array.isArray(r.filterFieldIds) ? r.filterFieldIds.map(String) : [],
     searchFieldIds: Array.isArray(r.searchFieldIds) ? r.searchFieldIds.map(String) : [],

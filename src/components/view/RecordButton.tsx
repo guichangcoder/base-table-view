@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Toast } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
-import type { FieldMetaLite } from '../../types';
+import type { ButtonHttpConfig, FieldMetaLite, HttpBodyFormat } from '../../types';
 import { getBaseToken, getUi } from '../../services/appContext';
 import { BUTTON_TYPE, getTableCached, listFieldsCached } from '../../services/baseService';
 import { getRecordById } from '../../services/recordService';
@@ -64,35 +64,126 @@ async function firstViewId(tableId: string): Promise<string> {
   return id;
 }
 
-/** webhook 触发结果：ok=宿主返回成功；sent=已发出但读不到响应；failed=发不出去 */
+/** 请求结果：ok=宿主返回成功；sent=已发出但读不到响应；failed=发不出去 */
 type TriggerResult = 'ok' | 'sent' | 'failed';
 
+interface SendOutcome {
+  result: TriggerResult;
+  /** 降级成 no-cors 简单请求：自定义请求头被浏览器丢弃 */
+  degraded: boolean;
+}
+
+const CONTENT_TYPE: Record<HttpBodyFormat, string> = {
+  json: 'application/json',
+  urlencoded: 'application/x-www-form-urlencoded',
+  text: 'text/plain',
+};
+
+/** 模板变量的取值上下文 */
+interface TemplateContext {
+  /** 字段名 → 展示文本 */
+  fields: Record<string, string>;
+  /** 字段名 → 原始结构（人员/附件类字段） */
+  raw: Record<string, unknown>;
+  /** 字段 id → 展示文本 */
+  byId: Record<string, string>;
+  /** 字段 id → 原始结构 */
+  rawById: Record<string, unknown>;
+  /** 展示别名 → 字段 id */
+  aliasToId: Record<string, string>;
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  return Object.keys(headers).some((k) => k.toLowerCase() === name);
+}
+
+/** 请求参数拼到地址上（地址自带 ? 时用 & 续接） */
+function buildUrl(url: string, params?: Array<{ k: string; v: string }>): string {
+  const pairs = (params ?? []).filter((p) => p.k.trim());
+  if (!pairs.length) return url;
+  const qs = pairs
+    .map((p) => `${encodeURIComponent(p.k.trim())}=${encodeURIComponent(p.v ?? '')}`)
+    .join('&');
+  return `${url}${url.includes('?') ? '&' : '?'}${qs}`;
+}
+
+/** 按请求体格式转义占位符的值，避免 JSON 被引号/换行破坏 */
+function escapeValue(text: string, format: HttpBodyFormat): string {
+  if (format === 'json') return JSON.stringify(text).slice(1, -1);
+  if (format === 'urlencoded') return encodeURIComponent(text);
+  return text;
+}
+
+/** 渲染 {{字段名}} / {{字段别名}}；未匹配的占位符原样保留 */
+function renderTemplate(template: string, format: HttpBodyFormat, ctx: TemplateContext): string {
+  return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (all, token: string) => {
+    const key = token.trim();
+    let fieldId = '';
+    if (key in ctx.fields) {
+      fieldId = '';
+    } else if (ctx.aliasToId[key]) {
+      fieldId = ctx.aliasToId[key];
+    } else {
+      return all;
+    }
+    const raw = fieldId ? ctx.rawById[fieldId] : ctx.raw[key];
+    if (raw !== undefined && raw !== null) {
+      return escapeValue(JSON.stringify(raw), format);
+    }
+    const text = fieldId ? ctx.byId[fieldId] : ctx.fields[key];
+    return text === undefined ? all : escapeValue(text, format);
+  });
+}
+
 /**
- * POST 数据表自动化的 webhook（自动化触发条件选「接收到 webhook 时」）。
+ * 按配置发送 HTTP 请求（对齐工作流「发送 HTTP 请求」节点）。
  *
- * 先用 JSON 请求：跨域时浏览器会先发预检，预检不通过则请求根本不会发出（不会误触发），
- * 此时再退化为 no-cors 简单请求（一定发得出去，但读不到响应），因此不会重复触发。
+ * 浏览器限制：带自定义请求头或非简单 Content-Type 时会先发跨域预检，
+ * 预检不通过则请求根本不会发出（不会误触发），此时退化为 no-cors 简单请求
+ * （一定发得出去，但读不到响应、自定义头会被丢弃）。
  */
-async function postWebhook(url: string, payload: Record<string, unknown>): Promise<TriggerResult> {
-  const body = JSON.stringify(payload);
+async function sendRequest(
+  cfg: ButtonHttpConfig,
+  autoPayload: Record<string, unknown>,
+  ctx: TemplateContext,
+): Promise<SendOutcome> {
+  const method = (cfg.method || 'POST').toUpperCase();
+  const url = buildUrl(cfg.url.trim(), cfg.params);
+  const headers: Record<string, string> = {};
+  (cfg.headers ?? []).forEach((h) => {
+    const key = (h.k ?? '').trim();
+    if (key) headers[key] = h.v ?? '';
+  });
+  const customHeader = Object.keys(headers).some((k) => k.toLowerCase() !== 'content-type');
+
+  let body: string | undefined;
+  if (method !== 'GET' && method !== 'HEAD') {
+    if (cfg.bodyMode === 'template') {
+      const format = cfg.bodyFormat ?? 'json';
+      body = renderTemplate(cfg.body ?? '', format, ctx);
+      if (!hasHeader(headers, 'content-type')) headers['Content-Type'] = CONTENT_TYPE[format];
+    } else {
+      body = JSON.stringify(autoPayload);
+      if (!hasHeader(headers, 'content-type')) headers['Content-Type'] = 'application/json';
+    }
+  }
+
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
-    return res.ok ? 'ok' : 'failed';
+    const res = await fetch(url, { method, headers, body });
+    return { result: res.ok ? 'ok' : 'failed', degraded: false };
   } catch {
+    // no-cors 只允许简单方法与简单 Content-Type，其余自定义头会被浏览器丢弃
+    const simpleHeaders: Record<string, string> = {};
+    const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type');
+    const ct = ctKey ? headers[ctKey] : '';
+    if (ct === 'text/plain' || ct === 'application/x-www-form-urlencoded') {
+      simpleHeaders['Content-Type'] = ct;
+    }
     try {
-      await fetch(url, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body,
-      });
-      return 'sent';
+      await fetch(url, { method, mode: 'no-cors', headers: simpleHeaders, body });
+      return { result: 'sent', degraded: customHeader };
     } catch {
-      return 'failed';
+      return { result: 'failed', degraded: false };
     }
   }
 }
@@ -102,6 +193,10 @@ interface RecordPayload {
   fields: Record<string, string>;
   /** 字段名 → 原始结构（仅人员/附件类字段） */
   raw: Record<string, unknown>;
+  /** 字段 id → 展示文本（模板用别名引用时需要） */
+  byId: Record<string, string>;
+  /** 字段 id → 原始结构 */
+  rawById: Record<string, unknown>;
 }
 
 /** 附件字段：在原始结构（name/size/type/token）上追加临时下载链接，拿不到链接时留空字符串 */
@@ -138,6 +233,8 @@ async function withAttachmentUrls(
 async function collectRecordPayload(tableId: string, recordId: string): Promise<RecordPayload> {
   const fields: Record<string, string> = {};
   const raw: Record<string, unknown> = {};
+  const byId: Record<string, string> = {};
+  const rawById: Record<string, unknown> = {};
   try {
     const [metas, record] = await Promise.all([
       listFieldsCached(tableId),
@@ -147,18 +244,22 @@ async function collectRecordPayload(tableId: string, recordId: string): Promise<
     for (const meta of metas) {
       if (meta.isButton || meta.type === BUTTON_TYPE) continue;
       const value = cells[meta.id];
-      fields[meta.name] = formatCellValue(value, meta);
+      const text = formatCellValue(value, meta);
+      fields[meta.name] = text;
+      byId[meta.id] = text;
       if (RAW_KEEP_TYPES.has(meta.type) && value !== null && value !== undefined) {
-        raw[meta.name] =
+        const kept =
           meta.type === FT.Attachment
             ? await withAttachmentUrls(tableId, recordId, meta.id, value)
             : value;
+        raw[meta.name] = kept;
+        rawById[meta.id] = kept;
       }
     }
   } catch (e) {
     console.warn('[RecordButton] 读取记录字段失败，仅发送记录标识:', e);
   }
-  return { fields, raw };
+  return { fields, raw, byId, rawById };
 }
 
 /** 调用宿主原生 UI，返回 true 表示已经打开真实按钮、用户可在此处点击执行 */
@@ -203,11 +304,13 @@ interface Props {
   field: FieldMetaLite;
   /** 按钮文案：优先用配置里的展示别名 */
   title?: string;
-  /** 自动化 Webhook 地址（配置在「字段配置」的按钮触发列） */
-  webhookUrl?: string;
+  /** 按钮动作配置（配置在「字段配置」的按钮动作弹窗） */
+  http?: ButtonHttpConfig;
+  /** 展示别名映射（字段 id → 别名），模板里用 {{别名}} 引用字段时需要 */
+  fieldLabels?: Record<string, string>;
 }
 
-export function RecordButton({ tableId, recordId, field, title, webhookUrl }: Props) {
+export function RecordButton({ tableId, recordId, field, title, http, fieldLabels }: Props) {
   const text = title || field.buttonTitle || field.name || '按钮';
   const bg = buttonColor(field.buttonColor);
   const [busy, setBusy] = useState(false);
@@ -217,13 +320,13 @@ export function RecordButton({ tableId, recordId, field, title, webhookUrl }: Pr
     if (tableId) void firstViewId(tableId);
   }, [tableId]);
 
-  const fireWebhook = async (url: string): Promise<boolean> => {
+  const fireRequest = async (cfg: ButtonHttpConfig): Promise<boolean> => {
     const viewId = tableId ? await firstViewId(tableId) : '';
-    const { fields, raw } =
+    const payload: RecordPayload =
       tableId && recordId
         ? await collectRecordPayload(tableId, recordId)
-        : { fields: {}, raw: {} };
-    const result = await postWebhook(url, {
+        : { fields: {}, raw: {}, byId: {}, rawById: {} };
+    const autoPayload = {
       plugin: 'base-table-view',
       event: 'button.click',
       requestId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -234,18 +337,30 @@ export function RecordButton({ tableId, recordId, field, title, webhookUrl }: Pr
       fieldId: field.id,
       buttonTitle: text,
       timestamp: new Date().toISOString(),
-      fields,
-      raw,
+      fields: payload.fields,
+      raw: payload.raw,
+    };
+    const aliasToId: Record<string, string> = {};
+    Object.entries(fieldLabels ?? {}).forEach(([id, alias]) => {
+      if (alias) aliasToId[alias] = id;
+    });
+    const { result, degraded } = await sendRequest(cfg, autoPayload, {
+      ...payload,
+      aliasToId,
     });
     if (result === 'ok') {
-      Toast.success('已触发该按钮对应的自动化流程');
+      Toast.success('已发送请求');
       return true;
     }
     if (result === 'sent') {
-      Toast.info('已发送触发请求（跨域限制下无法读取执行结果）');
+      Toast.info(
+        degraded
+          ? '已发送请求（跨域限制下无法读取结果，自定义请求头未生效）'
+          : '已发送请求（跨域限制下无法读取响应结果）',
+      );
       return true;
     }
-    Toast.error('按钮触发失败：无法访问该 Webhook 地址，请检查地址是否正确');
+    Toast.error('按钮触发失败：无法访问该请求地址，请检查地址与跨域设置');
     return false;
   };
 
@@ -261,22 +376,21 @@ export function RecordButton({ tableId, recordId, field, title, webhookUrl }: Pr
 
     setBusy(true);
     try {
-      // 1) 配置了自动化 webhook：直接在插件内触发，等同于点数据表里的按钮
-      const url = (webhookUrl ?? '').trim();
-      if (url) {
-        await fireWebhook(url);
+      // 1) 配置了按钮动作：按配置发送请求，等同于点数据表里的按钮
+      if (http && http.url.trim()) {
+        await fireRequest(http);
         return;
       }
 
       const viewId = await firstViewId(tableId);
 
-      // 2) 未配置 webhook：调用宿主原生按钮 UI（不跳转数据表）
+      // 2) 未配置动作：调用宿主原生按钮 UI（不跳转数据表）
       if (await tryHostButtonUi(tableId, recordId, field.id, viewId)) {
         Toast.info('已打开数据表原生按钮界面，请点击其中的按钮执行');
         return;
       }
 
-      Toast.warning('该按钮尚未配置「自动化 Webhook 地址」，请在配置页「3. 字段配置」中填写后使用');
+      Toast.warning('该按钮尚未配置动作，请在配置页「3. 字段配置」中点击「配置」后使用');
     } finally {
       setBusy(false);
     }

@@ -1,3 +1,39 @@
+/** 请求参数 / 请求头的键值对 */
+export interface HttpPair {
+  k: string;
+  v: string;
+}
+
+/**
+ * 请求体内容格式。
+ * 浏览器无法手写 multipart/form-data 的 boundary，故只提供 JSON、表单编码、纯文本三种。
+ */
+export type HttpBodyFormat = 'json' | 'urlencoded' | 'text';
+
+/**
+ * 按钮字段的 HTTP 请求配置，对齐数据表工作流「发送 HTTP 请求」节点：
+ * 请求方法 + 请求地址 + 请求参数 + 请求头 + 请求体。
+ */
+export interface ButtonHttpConfig {
+  /** 请求方法：POST / GET / PUT / PATCH / DELETE */
+  method: string;
+  /** 请求地址 */
+  url: string;
+  /** 请求参数（拼接到 URL 上） */
+  params?: HttpPair[];
+  /** 请求头 */
+  headers?: HttpPair[];
+  /**
+   * 请求体：auto = 自动全集（fields + raw，与旧版一致）；
+   * template = 自定义模板，可用 {{字段名}} / {{字段别名}} 引用本条记录的值。
+   */
+  bodyMode: 'auto' | 'template';
+  /** 模板内容格式，决定 Content-Type */
+  bodyFormat?: HttpBodyFormat;
+  /** 自定义模板内容（bodyMode = template 时生效） */
+  body?: string;
+}
+
 /** 字段强调样式 */
 export interface EmphasisStyle {
   bold?: boolean;
@@ -22,11 +58,10 @@ export interface FieldConfig {
    */
   asButton?: boolean;
   /**
-   * 按钮字段的触发地址：数据表自动化的 webhook 链接
-   * （自动化触发条件选「接收到 webhook 时」，复制其唯一地址填在这里）。
-   * 插件内点击按钮即 POST 该地址，效果等同于点击数据表里的该按钮。
+   * 按钮字段的动作配置：点击后按该配置发送 HTTP 请求
+   * （对齐工作流「发送 HTTP 请求」节点；旧版的 webhookUrl 读取时会自动升级成 POST + 自动全集）。
    */
-  webhookUrl?: string;
+  http?: ButtonHttpConfig;
 }
 
 /** 分组配置 */

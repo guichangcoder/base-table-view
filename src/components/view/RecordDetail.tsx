@@ -123,6 +123,10 @@ export function RecordDetail({ config, fields, record }: Props) {
   const fieldMap = new Map(fields.map((f) => [f.id, f]));
   const cfgMap = new Map(config.fields.map((c) => [c.fieldId, c]));
   const linkMap = new Map(config.links.map((l) => [l.fieldId, l]));
+  const labelMap: Record<string, string> = {};
+  config.fields.forEach((c) => {
+    if (c.label) labelMap[c.fieldId] = c.label;
+  });
 
   // 单据配置的子表：浏览态统一以横向表格展示（与新增单据页一致）
   const subs = config.doc?.enabled
@@ -187,7 +191,8 @@ export function RecordDetail({ config, fields, record }: Props) {
                         recordId={record.recordId}
                         field={field}
                         title={cfg?.label || field.buttonTitle || field.name}
-                        webhookUrl={cfg?.webhookUrl}
+                        http={cfg?.http}
+                        fieldLabels={labelMap}
                       />
                     ) : (
                       <div

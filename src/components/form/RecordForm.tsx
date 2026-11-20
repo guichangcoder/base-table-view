@@ -63,6 +63,13 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
 
   const cfgMap = useMemo(() => new Map(config.fields.map((c) => [c.fieldId, c])), [config.fields]);
   const fieldMap = useMemo(() => new Map(fields.map((f) => [f.id, f])), [fields]);
+  const labelMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    config.fields.forEach((c) => {
+      if (c.label) map[c.fieldId] = c.label;
+    });
+    return map;
+  }, [config.fields]);
 
   // 字段是否允许前端编辑：类型可编辑 且 配置未关闭「可编辑」
   const canEdit = (f: FieldMetaLite): boolean => isEditableType(f.type) && cfgMap.get(f.id)?.readonly !== true;
@@ -261,7 +268,8 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
           recordId={mode === 'edit' ? record?.recordId : undefined}
           field={field}
           title={cfg?.label || undefined}
-          webhookUrl={cfg?.webhookUrl}
+          http={cfg?.http}
+          fieldLabels={labelMap}
         />
       );
     }
