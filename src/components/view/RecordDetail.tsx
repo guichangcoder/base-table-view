@@ -8,7 +8,6 @@ import { hexToRgba, toneOf } from '../../utils/palette';
 import { fieldLabel } from '../../utils/validator';
 import { loadViewMeta } from '../../services/baseService';
 import { listRecords } from '../../services/recordService';
-import { LinkBlock } from './LinkBlock';
 import { RecordButton } from './RecordButton';
 
 interface Props {
@@ -111,7 +110,7 @@ function valueStyle(emphasis: { bold?: boolean; color?: string } | undefined): C
   return style;
 }
 
-/** 单条记录的详情：按配置分组渲染，关联字段纵向展开 */
+/** 单条记录的详情：主表字段按配置分组只读展示，子表以横向表格展示一次 */
 export function RecordDetail({ config, fields, record }: Props) {
   if (!record) {
     return (
@@ -125,19 +124,24 @@ export function RecordDetail({ config, fields, record }: Props) {
   const cfgMap = new Map(config.fields.map((c) => [c.fieldId, c]));
   const linkMap = new Map(config.links.map((l) => [l.fieldId, l]));
 
-  const blocks = config.groups
-    .map((group) => {
-      const ids = visibleFieldIds(config, group).filter((id) => fieldMap.has(id));
-      const plainIds = ids.filter((id) => !linkMap.has(id));
-      const linkIds = ids.filter((id) => linkMap.has(id));
-      return { group, plainIds, linkIds, count: ids.length };
-    })
-    .filter((b) => b.count > 0);
-
-  // 单据配置的子表：浏览态同样以横向表格展示
+  // 单据配置的子表：浏览态统一以横向表格展示（与新增单据页一致）
   const subs = config.doc?.enabled
     ? (config.doc.subs ?? []).filter((s) => s.tableId && s.linkFieldId)
     : [];
+  const subTableIds = new Set(subs.map((s) => s.tableId));
+
+  const blocks = config.groups
+    .map((group) => {
+      const ids = visibleFieldIds(config, group)
+        .filter((id) => fieldMap.has(id))
+        // 已由下方 doc-sub 表格展示的子表，其关联字段不在字段网格里重复出现
+        .filter((id) => {
+          const link = linkMap.get(id);
+          return !link || !subTableIds.has(link.tableId);
+        });
+      return { group, ids, count: ids.length };
+    })
+    .filter((b) => b.count > 0);
 
   if (!blocks.length && !subs.length) {
     return (
@@ -149,7 +153,7 @@ export function RecordDetail({ config, fields, record }: Props) {
 
   return (
     <div className="detail">
-      {blocks.map(({ group, plainIds, linkIds }) => {
+      {blocks.map(({ group, ids }) => {
         const tone = toneOf(group.color);
         return (
           <section
@@ -160,62 +164,46 @@ export function RecordDetail({ config, fields, record }: Props) {
             <header className="group-block-head">
               <i className="group-block-bar" style={{ background: tone.color }} />
               <h3 style={{ color: tone.color }}>{group.name}</h3>
-              <span className="group-block-count">{plainIds.length + linkIds.length} 个字段</span>
+              <span className="group-block-count">{ids.length} 个字段</span>
             </header>
 
-            {linkIds.map((id) => {
-              const field = fieldMap.get(id);
-              const link = linkMap.get(id);
-              if (!field || !link) return null;
-              return (
-                <LinkBlock
-                  key={id}
-                  link={link}
-                  value={record.fields[id]}
-                  fieldName={fieldLabel(field, cfgMap.get(id))}
-                />
-              );
-            })}
-
-            {plainIds.length ? (
-              <div className={`field-grid cols-${group.columns}`}>
-                {plainIds.map((id) => {
-                  const field = fieldMap.get(id);
-                  if (!field) return null;
-                  const cfg = cfgMap.get(id);
-                  const text = formatCellValue(record.fields[id], field);
-                  const highlight = cfg?.emphasis?.highlight;
-                  const hlColor = cfg?.emphasis?.color ?? group.color;
-                  return (
-                    <div className="field-item" key={id}>
-                      <div className="field-label">
-                        {fieldLabel(field, cfg)}
-                        {cfg?.required ? <i className="field-required">*</i> : null}
-                      </div>
-                      {isButtonField(field, cfg) ? (
-                        <RecordButton
-                          tableId={config.tableId}
-                          recordId={record.recordId}
-                          field={field}
-                          title={cfg?.label || field.buttonTitle || field.name}
-                          webhookUrl={cfg?.webhookUrl}
-                        />
-                      ) : (
-                        <div
-                          className={`field-value${text ? '' : ' empty'}`}
-                          style={{
-                            ...valueStyle(cfg?.emphasis),
-                            ...(highlight ? { background: hexToRgba(hlColor, 0.14) } : null),
-                          }}
-                        >
-                          {text || '—'}
-                        </div>
-                      )}
+            <div className={`field-grid cols-${group.columns}`}>
+              {ids.map((id) => {
+                const field = fieldMap.get(id);
+                if (!field) return null;
+                const cfg = cfgMap.get(id);
+                const text = formatCellValue(record.fields[id], field);
+                const highlight = cfg?.emphasis?.highlight;
+                const hlColor = cfg?.emphasis?.color ?? group.color;
+                return (
+                  <div className="field-item" key={id}>
+                    <div className="field-label">
+                      {fieldLabel(field, cfg)}
+                      {cfg?.required ? <i className="field-required">*</i> : null}
                     </div>
-                  );
-                })}
-              </div>
-            ) : null}
+                    {isButtonField(field, cfg) ? (
+                      <RecordButton
+                        tableId={config.tableId}
+                        recordId={record.recordId}
+                        field={field}
+                        title={cfg?.label || field.buttonTitle || field.name}
+                        webhookUrl={cfg?.webhookUrl}
+                      />
+                    ) : (
+                      <div
+                        className={`field-value${text ? '' : ' empty'}`}
+                        style={{
+                          ...valueStyle(cfg?.emphasis),
+                          ...(highlight ? { background: hexToRgba(hlColor, 0.14) } : null),
+                        }}
+                      >
+                        {text || '—'}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </section>
         );
       })}
