@@ -261,6 +261,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
           recordId={mode === 'edit' ? record?.recordId : undefined}
           field={field}
           title={cfg?.label || undefined}
+          webhookUrl={cfg?.webhookUrl}
         />
       );
     }

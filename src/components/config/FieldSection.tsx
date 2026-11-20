@@ -87,6 +87,8 @@ export function FieldSection({ config, fields, onChange }: Props) {
         「必填」只对前端可编辑字段生效，提交时会校验；只读字段（公式、创建时间等）不参与必填。「可编辑」关闭后该字段在前端仅展示、置灰不可修改。
         <br />
         字段名后的类型标签可点击：切成「按钮」表示该字段在前端渲染成按钮（用于数据表里的按钮字段），再点一下恢复按普通字段展示。
+        <br />
+        按钮字段可在最后一列填「自动化 Webhook 地址」：在数据表里新建自动化流程，触发条件选「接收到 webhook 时」，复制其唯一地址填入。之后在插件里点击该按钮，会把本记录的全部字段值以 JSON 形式 POST 给该流程（在流程的「输出设置」里解析请求体后，即可在后续步骤中引用这些字段）：文本值在 fields 里；人员、附件类字段另外在 raw 里带上原始结构（附件含 token 和临时下载链接 url）。注意：该流程请勿开启「凭证校验」和「IP 白名单」，否则浏览器发出的请求无法通过校验。
       </p>
 
       <div className="field-table">
@@ -99,6 +101,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
           <div>加粗</div>
           <div>字体颜色</div>
           <div>底色高亮</div>
+          <div>按钮触发</div>
         </div>
 
         {list.map((field) => {
@@ -202,6 +205,16 @@ export function FieldSection({ config, fields, onChange }: Props) {
                 >
                   {null}
                 </Checkbox>
+              </div>
+              <div>
+                {isBtn ? (
+                  <Input
+                    size="small"
+                    value={cfg?.webhookUrl ?? ''}
+                    placeholder="自动化 Webhook 地址"
+                    onChange={(v) => patch(field.id, { webhookUrl: v.trim() ? v : undefined })}
+                  />
+                ) : null}
               </div>
             </div>
           );

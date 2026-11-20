@@ -1,22 +1,29 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Toast } from '@douyinfe/semi-ui';
+import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite } from '../../types';
-import { getBaseToken, getBridge, getUi } from '../../services/appContext';
-import { getTableCached } from '../../services/baseService';
+import { getBaseToken, getUi } from '../../services/appContext';
+import { BUTTON_TYPE, getTableCached, listFieldsCached } from '../../services/baseService';
+import { getRecordById } from '../../services/recordService';
+import { formatCellValue } from '../../utils/valueConverter';
 import { HOST_TIMEOUT, METADATA_TIMEOUT, withTimeout } from '../../utils/timeout';
 
 /**
  * 数据表「按钮」字段在前端的呈现。
  *
- * JSSDK 没有「触发按钮动作 / 执行工作流」的接口，按钮动作只能由数据表自身执行，
- * 因此点击时调用宿主原生 UI，把用户带到这个真实按钮上：
- *   1. ui.showFieldValueEditor —— 打开该按钮字段的值编辑器，等同于在数据表里点这个按钮；
- *   2. ui.showRecordDetailDialog —— 打开原生记录详情（尽量只显示该按钮字段），在其中点击按钮；
- *   3. bridge.getBitableUrl —— 前两者都不可用时，新标签页打开该记录的真实数据表卡片；
- *   4. 全都不行时给出明确提示，不静默失败。
- * 每一步都带超时与异常兜底：宿主未实现该接口时会抛 NotSupportedError 或 Promise 永不 settle，
- * 否则表现为「点击没反应」。
+ * JSSDK 没有触发按钮动作的接口，按钮绑定的自动化/工作流只能由数据表执行。
+ * 因此按优先级把点击落到「真实按钮」上：
+ *   1. 配置了「自动化 Webhook 地址」时，读出本记录各字段的值并 POST 到该地址
+ *      （自动化触发条件选「接收到 webhook 时」，即可在流程里引用这些字段）；
+ *   2. 未配置时尝试调用宿主原生 UI（showFieldValueEditor / showRecordDetailDialog），在其中点真实按钮；
+ *   3. 宿主不支持时给出明确提示，不跳转数据表，也不静默失败。
+ * 宿主未实现某个 UI 接口时会抛 NotSupportedError 或 Promise 永不 settle，故调用带超时兜底。
  */
+
+const FT = FieldType as any;
+
+/** 文本化会丢信息的字段类型：除文本外再透传一份原始结构 */
+const RAW_KEEP_TYPES = new Set<number>([FT.User, FT.CreatedUser, FT.ModifiedUser, FT.Attachment]);
 
 /** 按钮配色索引（与数据表按钮调色板一致：1 红 2 橙 3 黄 4 绿 5 蓝 6 紫） */
 const BUTTON_COLORS: Record<number, string> = {
@@ -57,6 +64,103 @@ async function firstViewId(tableId: string): Promise<string> {
   return id;
 }
 
+/** webhook 触发结果：ok=宿主返回成功；sent=已发出但读不到响应；failed=发不出去 */
+type TriggerResult = 'ok' | 'sent' | 'failed';
+
+/**
+ * POST 数据表自动化的 webhook（自动化触发条件选「接收到 webhook 时」）。
+ *
+ * 先用 JSON 请求：跨域时浏览器会先发预检，预检不通过则请求根本不会发出（不会误触发），
+ * 此时再退化为 no-cors 简单请求（一定发得出去，但读不到响应），因此不会重复触发。
+ */
+async function postWebhook(url: string, payload: Record<string, unknown>): Promise<TriggerResult> {
+  const body = JSON.stringify(payload);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    return res.ok ? 'ok' : 'failed';
+  } catch {
+    try {
+      await fetch(url, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body,
+      });
+      return 'sent';
+    } catch {
+      return 'failed';
+    }
+  }
+}
+
+interface RecordPayload {
+  /** 字段名 → 展示文本 */
+  fields: Record<string, string>;
+  /** 字段名 → 原始结构（仅人员/附件类字段） */
+  raw: Record<string, unknown>;
+}
+
+/** 附件字段：在原始结构（name/size/type/token）上追加临时下载链接，拿不到链接时留空字符串 */
+async function withAttachmentUrls(
+  tableId: string,
+  recordId: string,
+  fieldId: string,
+  value: unknown,
+): Promise<unknown> {
+  const items = Array.isArray(value) ? value : [value];
+  const tokens = items.map((it: any) => String(it?.token ?? '')).filter(Boolean);
+  let urls: string[] = [];
+  if (tokens.length) {
+    try {
+      const table: any = await getTableCached(tableId);
+      urls = await withTimeout(
+        Promise.resolve(table.getCellAttachmentUrls(tokens, fieldId, recordId)),
+        METADATA_TIMEOUT,
+        'getCellAttachmentUrls',
+      );
+    } catch {
+      urls = [];
+    }
+  }
+  return items.map((it: any, i: number) =>
+    it && typeof it === 'object' ? { ...it, url: urls[i] ?? '' } : it,
+  );
+}
+
+/**
+ * 读取本记录的值：`fields` 为「字段名 → 文本」；人员/附件类字段另外在 `raw` 里透传原始结构。
+ * 按钮字段本身没有值，跳过。读取失败不阻塞触发，退化为只发送记录标识，由自动化侧按 recordId 自行查找。
+ */
+async function collectRecordPayload(tableId: string, recordId: string): Promise<RecordPayload> {
+  const fields: Record<string, string> = {};
+  const raw: Record<string, unknown> = {};
+  try {
+    const [metas, record] = await Promise.all([
+      listFieldsCached(tableId),
+      getRecordById(tableId, recordId),
+    ]);
+    const cells = record.fields ?? {};
+    for (const meta of metas) {
+      if (meta.isButton || meta.type === BUTTON_TYPE) continue;
+      const value = cells[meta.id];
+      fields[meta.name] = formatCellValue(value, meta);
+      if (RAW_KEEP_TYPES.has(meta.type) && value !== null && value !== undefined) {
+        raw[meta.name] =
+          meta.type === FT.Attachment
+            ? await withAttachmentUrls(tableId, recordId, meta.id, value)
+            : value;
+      }
+    }
+  } catch (e) {
+    console.warn('[RecordButton] 读取记录字段失败，仅发送记录标识:', e);
+  }
+  return { fields, raw };
+}
+
 /** 调用宿主原生 UI，返回 true 表示已经打开真实按钮、用户可在此处点击执行 */
 async function tryHostButtonUi(
   tableId: string,
@@ -76,13 +180,11 @@ async function tryHostButtonUi(
     }
   };
 
-  // 1) 该按钮字段的值编辑器：最接近「在数据表里点这个按钮」
   if (viewId && typeof ui.showFieldValueEditor === 'function') {
     if (await call('showFieldValueEditor', () => ui.showFieldValueEditor({ tableId, viewId, recordId, fieldId }))) {
       return true;
     }
   }
-  // 2) 原生记录详情（只显示该按钮字段），在其中点击真实按钮
   if (typeof ui.showRecordDetailDialog === 'function') {
     if (await call('showRecordDetailDialog', () => ui.showRecordDetailDialog({ tableId, recordId, fieldIdList: [fieldId] }))) {
       return true;
@@ -94,51 +196,6 @@ async function tryHostButtonUi(
   return false;
 }
 
-/** 兜底：getBitableUrl 不可用时，用 baseToken + 宿主域名自行拼一个数据表链接 */
-function manualUrl(tableId: string, viewId: string, recordId: string): string {
-  const baseToken = getBaseToken();
-  if (!baseToken) return '';
-  let origin = '';
-  try {
-    origin = new URL(document.referrer).origin;
-  } catch {
-    origin = '';
-  }
-  if (!origin) return '';
-  const query = new URLSearchParams({ table: tableId });
-  if (viewId) query.set('view', viewId);
-  if (recordId) query.set('record', recordId);
-  return `${origin}/base/${baseToken}?${query.toString()}`;
-}
-
-/** 在新标签页打开该记录在真实多维表格中的卡片（保证可用的一级兜底） */
-async function openRealRecord(tableId: string, viewId: string, recordId: string): Promise<boolean> {
-  let url = '';
-  try {
-    const bridge = getBridge() as any;
-    if (bridge && typeof bridge.getBitableUrl === 'function') {
-      url = String(
-        (await withTimeout(
-          Promise.resolve(bridge.getBitableUrl({ tableId, viewId, recordId })),
-          HOST_TIMEOUT,
-          'getBitableUrl',
-        )) || '',
-      );
-    }
-  } catch {
-    url = '';
-  }
-  if (!url) url = manualUrl(tableId, viewId, recordId);
-  if (!url) return false;
-  const win = window.open(url, '_blank');
-  if (!win) {
-    Toast.warning('浏览器拦截了新窗口，请允许弹出窗口后重试');
-    return false;
-  }
-  win.opener = null;
-  return true;
-}
-
 interface Props {
   tableId?: string;
   /** 记录 id（新增态还没有记录，无法执行按钮动作） */
@@ -146,16 +203,51 @@ interface Props {
   field: FieldMetaLite;
   /** 按钮文案：优先用配置里的展示别名 */
   title?: string;
+  /** 自动化 Webhook 地址（配置在「字段配置」的按钮触发列） */
+  webhookUrl?: string;
 }
 
-export function RecordButton({ tableId, recordId, field, title }: Props) {
+export function RecordButton({ tableId, recordId, field, title, webhookUrl }: Props) {
   const text = title || field.buttonTitle || field.name || '按钮';
   const bg = buttonColor(field.buttonColor);
+  const [busy, setBusy] = useState(false);
 
-  // 提前取好 viewId，缩短点击后的等待，避免新标签页被浏览器拦截
+  // 提前取好 viewId，缩短点击后的等待
   useEffect(() => {
     if (tableId) void firstViewId(tableId);
   }, [tableId]);
+
+  const fireWebhook = async (url: string): Promise<boolean> => {
+    const viewId = tableId ? await firstViewId(tableId) : '';
+    const { fields, raw } =
+      tableId && recordId
+        ? await collectRecordPayload(tableId, recordId)
+        : { fields: {}, raw: {} };
+    const result = await postWebhook(url, {
+      plugin: 'base-table-view',
+      event: 'button.click',
+      requestId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      baseToken: getBaseToken(),
+      tableId,
+      viewId,
+      recordId,
+      fieldId: field.id,
+      buttonTitle: text,
+      timestamp: new Date().toISOString(),
+      fields,
+      raw,
+    });
+    if (result === 'ok') {
+      Toast.success('已触发该按钮对应的自动化流程');
+      return true;
+    }
+    if (result === 'sent') {
+      Toast.info('已发送触发请求（跨域限制下无法读取执行结果）');
+      return true;
+    }
+    Toast.error('按钮触发失败：无法访问该 Webhook 地址，请检查地址是否正确');
+    return false;
+  };
 
   const handleClick = async () => {
     if (!tableId) {
@@ -167,27 +259,34 @@ export function RecordButton({ tableId, recordId, field, title }: Props) {
       return;
     }
 
-    const viewId = await firstViewId(tableId);
+    setBusy(true);
+    try {
+      // 1) 配置了自动化 webhook：直接在插件内触发，等同于点数据表里的按钮
+      const url = (webhookUrl ?? '').trim();
+      if (url) {
+        await fireWebhook(url);
+        return;
+      }
 
-    // 1) 宿主原生按钮 UI：点它等同于在数据表里点这个按钮
-    if (await tryHostButtonUi(tableId, recordId, field.id, viewId)) {
-      Toast.info('已打开数据表原生按钮界面，请点击其中的按钮执行');
-      return;
+      const viewId = await firstViewId(tableId);
+
+      // 2) 未配置 webhook：调用宿主原生按钮 UI（不跳转数据表）
+      if (await tryHostButtonUi(tableId, recordId, field.id, viewId)) {
+        Toast.info('已打开数据表原生按钮界面，请点击其中的按钮执行');
+        return;
+      }
+
+      Toast.warning('该按钮尚未配置「自动化 Webhook 地址」，请在配置页「3. 字段配置」中填写后使用');
+    } finally {
+      setBusy(false);
     }
-
-    // 2) 兜底：新标签页打开真实数据表中的该记录
-    if (await openRealRecord(tableId, viewId, recordId)) {
-      Toast.info('已在新标签页打开该记录：请点击其中的按钮执行');
-      return;
-    }
-
-    Toast.warning('当前宿主无法打开数据表，请手动回到多维表格中点击该按钮');
   };
 
   return (
     <Button
       className="record-button"
       theme="solid"
+      loading={busy}
       style={{ background: bg, borderColor: bg, color: '#fff' }}
       onClick={() => void handleClick()}
     >

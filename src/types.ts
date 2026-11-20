@@ -21,6 +21,12 @@ export interface FieldConfig {
    * 数据表里的按钮字段由宿主返回的元信息可能不带可识别类型，手动指定是保底开关。
    */
   asButton?: boolean;
+  /**
+   * 按钮字段的触发地址：数据表自动化的 webhook 链接
+   * （自动化触发条件选「接收到 webhook 时」，复制其唯一地址填在这里）。
+   * 插件内点击按钮即 POST 该地址，效果等同于点击数据表里的该按钮。
+   */
+  webhookUrl?: string;
 }
 
 /** 分组配置 */

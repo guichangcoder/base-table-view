@@ -198,6 +198,7 @@ export function RecordDetail({ config, fields, record }: Props) {
                           recordId={record.recordId}
                           field={field}
                           title={cfg?.label || field.buttonTitle || field.name}
+                          webhookUrl={cfg?.webhookUrl}
                         />
                       ) : (
                         <div
