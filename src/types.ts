@@ -19,9 +19,9 @@ export interface ButtonHttpConfig {
   method: string;
   /** 请求地址 */
   url: string;
-  /** 请求参数（拼接到 URL 上） */
+  /** 请求参数（拼接到 URL 上），值支持 {{记录ID}} / {{字段名}} 占位符 */
   params?: HttpPair[];
-  /** 请求头 */
+  /** 请求头，值支持 {{记录ID}} / {{字段名}} 占位符 */
   headers?: HttpPair[];
   /**
    * 请求体：auto = 自动全集（fields + raw，与旧版一致）；

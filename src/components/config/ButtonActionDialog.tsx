@@ -23,11 +23,19 @@ const BODY_PLACEHOLDER: Record<HttpBodyFormat, string> = {
   text: '{{姓名}} {{电话}}',
 };
 
+/** 请求参数值的默认动态占位符：点击按钮时取当前记录 id */
+const RECORD_ID_TOKEN = '{{记录ID}}';
+
+/** 请求参数默认值：一条空键 + 动态记录 id */
+function defaultParams(): HttpPair[] {
+  return [{ k: '', v: RECORD_ID_TOKEN }];
+}
+
 function emptyDraft(): ButtonHttpConfig {
   return {
     method: 'POST',
     url: '',
-    params: [{ k: '', v: '' }],
+    params: defaultParams(),
     headers: [{ k: '', v: '' }],
     bodyMode: 'auto',
     bodyFormat: 'json',
@@ -38,10 +46,14 @@ function emptyDraft(): ButtonHttpConfig {
 function withDraft(value?: ButtonHttpConfig): ButtonHttpConfig {
   const base = emptyDraft();
   if (!value) return base;
+  const savedParams: HttpPair[] = value.params ?? [];
+  const params = savedParams.length ? savedParams : defaultParams();
+  // 旧配置里可能留着全部空白的参数行：升级成默认的 {{记录ID}}
+  const blankParams = params.every((p) => !p.k.trim() && !p.v.trim());
   return {
     ...base,
     ...value,
-    params: value.params?.length ? value.params : base.params,
+    params: blankParams ? defaultParams() : params,
     headers: value.headers?.length ? value.headers : base.headers,
   };
 }
@@ -51,12 +63,14 @@ interface PairEditorProps {
   onChange: (next: HttpPair[]) => void;
   keyPlaceholder: string;
   valuePlaceholder: string;
+  /** 新增行的默认值（请求参数默认填入 {{记录ID}}） */
+  newRowValue?: string;
   disabled?: boolean;
 }
 
 /** 键值对编辑器（Params / Headers 共用） */
-function PairEditor({ pairs, onChange, keyPlaceholder, valuePlaceholder, disabled }: PairEditorProps) {
-  const rows = pairs.length ? pairs : [{ k: '', v: '' }];
+function PairEditor({ pairs, onChange, keyPlaceholder, valuePlaceholder, newRowValue = '', disabled }: PairEditorProps) {
+  const rows = pairs.length ? pairs : [{ k: '', v: newRowValue }];
   const setRow = (i: number, patch: Partial<HttpPair>) => {
     onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   };
@@ -95,7 +109,7 @@ function PairEditor({ pairs, onChange, keyPlaceholder, valuePlaceholder, disable
         theme="borderless"
         type="primary"
         disabled={disabled}
-        onClick={() => onChange([...rows, { k: '', v: '' }])}
+        onClick={() => onChange([...rows, { k: '', v: newRowValue }])}
       >
         + 添加
       </Button>
@@ -204,8 +218,13 @@ export function ButtonActionDialog({ visible, field, value, fields, onCancel, on
             pairs={draft.params ?? []}
             keyPlaceholder="键"
             valuePlaceholder="值"
+            newRowValue={RECORD_ID_TOKEN}
             onChange={(next) => patch({ params: next })}
           />
+          <div className="btn-action-tip">
+            值支持动态占位符：{RECORD_ID_TOKEN} 取当前记录 id（新增参数行默认填入），
+            {'{{字段名}}'} 或 {'{{字段别名}}'} 取本条记录字段值；未匹配的占位符原样保留。
+          </div>
         </div>
 
         <div className="btn-action-block">
@@ -217,6 +236,7 @@ export function ButtonActionDialog({ visible, field, value, fields, onCancel, on
             onChange={(next) => patch({ headers: next })}
           />
           <div className="btn-action-tip">
+            值同样支持 {RECORD_ID_TOKEN}、{'{{字段名}}'} 等占位符。
             Content-Type 已按请求体格式自动设置，无需手填。自定义请求头会触发跨域预检，
             目标服务必须允许跨域，否则浏览器会拦截该请求。
           </div>

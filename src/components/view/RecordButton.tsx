@@ -89,18 +89,36 @@ interface TemplateContext {
   rawById: Record<string, unknown>;
   /** 展示别名 → 字段 id */
   aliasToId: Record<string, string>;
+  /** 内置变量（记录ID、数据表ID 等）→ 文本 */
+  vars: Record<string, string>;
 }
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {
   return Object.keys(headers).some((k) => k.toLowerCase() === name);
 }
 
-/** 请求参数拼到地址上（地址自带 ? 时用 & 续接） */
-function buildUrl(url: string, params?: Array<{ k: string; v: string }>): string {
+/** 渲染 {{...}} 占位符为纯文本（Params / Headers 用）：未匹配的保留原样 */
+function renderPlain(template: string, ctx: TemplateContext): string {
+  return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (all, token: string) => {
+    const key = token.trim();
+    if (key in ctx.vars) return ctx.vars[key];
+    if (key in ctx.fields) return ctx.fields[key];
+    const aliasId = ctx.aliasToId[key];
+    if (aliasId && ctx.byId[aliasId] !== undefined) return ctx.byId[aliasId];
+    if (ctx.byId[key] !== undefined) return ctx.byId[key];
+    return all;
+  });
+}
+
+/** 请求参数拼到地址上（地址自带 ? 时用 & 续接），值支持 {{记录ID}} / {{字段名}} 等占位符 */
+function buildUrl(url: string, params: Array<{ k: string; v: string }> | undefined, ctx: TemplateContext): string {
   const pairs = (params ?? []).filter((p) => p.k.trim());
   if (!pairs.length) return url;
   const qs = pairs
-    .map((p) => `${encodeURIComponent(p.k.trim())}=${encodeURIComponent(p.v ?? '')}`)
+    .map(
+      (p) =>
+        `${encodeURIComponent(renderPlain(p.k.trim(), ctx))}=${encodeURIComponent(renderPlain(p.v ?? '', ctx))}`,
+    )
     .join('&');
   return `${url}${url.includes('?') ? '&' : '?'}${qs}`;
 }
@@ -112,10 +130,11 @@ function escapeValue(text: string, format: HttpBodyFormat): string {
   return text;
 }
 
-/** 渲染 {{字段名}} / {{字段别名}}；未匹配的占位符原样保留 */
+/** 渲染 {{字段名}} / {{字段别名}} / {{记录ID}}；未匹配的占位符原样保留 */
 function renderTemplate(template: string, format: HttpBodyFormat, ctx: TemplateContext): string {
   return template.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (all, token: string) => {
     const key = token.trim();
+    if (key in ctx.vars) return escapeValue(ctx.vars[key], format);
     let fieldId = '';
     if (key in ctx.fields) {
       fieldId = '';
@@ -146,11 +165,11 @@ async function sendRequest(
   ctx: TemplateContext,
 ): Promise<SendOutcome> {
   const method = (cfg.method || 'POST').toUpperCase();
-  const url = buildUrl(cfg.url.trim(), cfg.params);
+  const url = buildUrl(cfg.url.trim(), cfg.params, ctx);
   const headers: Record<string, string> = {};
   (cfg.headers ?? []).forEach((h) => {
     const key = (h.k ?? '').trim();
-    if (key) headers[key] = h.v ?? '';
+    if (key) headers[key] = renderPlain(h.v ?? '', ctx);
   });
   const customHeader = Object.keys(headers).some((k) => k.toLowerCase() !== 'content-type');
 
@@ -310,6 +329,8 @@ export function RecordButton({ tableId, recordId, field, title, http, fieldLabel
     const { result, degraded } = await sendRequest(cfg, autoPayload, {
       ...payload,
       aliasToId,
+      // 内置变量：Params / Headers / 请求体模板里都可引用当前记录 id
+      vars: { 记录ID: recordId ?? '', recordId: recordId ?? '' },
     });
     if (result === 'ok') {
       Toast.success('已发送请求');
