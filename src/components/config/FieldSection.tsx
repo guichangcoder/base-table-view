@@ -120,6 +120,8 @@ export function FieldSection({ config, fields, onChange }: Props) {
           const editable = !typeDisabled && !readonlyCfg;
           const requiredDisabled = typeDisabled || readonlyCfg;
           const isBtn = isButtonField(field, cfg);
+          // 「显示」关闭后该字段前端不出现，其余配置项一并置灰，避免配了不生效造成困惑
+          const rowDisabled = !visible;
 
           return (
             <div className="field-row" key={field.id}>
@@ -142,6 +144,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
               <div>
                 <Input
                   size="small"
+                  disabled={rowDisabled}
                   value={cfg?.label ?? ''}
                   placeholder={field.name}
                   onChange={(v) => patch(field.id, { label: v.trim() ? v : undefined })}
@@ -158,7 +161,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
               <div>
                 <Checkbox
                   checked={editable}
-                  disabled={typeDisabled}
+                  disabled={typeDisabled || rowDisabled}
                   onChange={(e) =>
                     patch(
                       field.id,
@@ -172,7 +175,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
               <div>
                 <Checkbox
                   checked={!!cfg?.required}
-                  disabled={requiredDisabled}
+                  disabled={requiredDisabled || rowDisabled}
                   onChange={(e) => patch(field.id, { required: !!e.target.checked })}
                 >
                   {null}
@@ -181,6 +184,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
               <div>
                 <Checkbox
                   checked={!!cfg?.emphasis?.bold}
+                  disabled={rowDisabled}
                   onChange={(e) => setEmphasis(field.id, 'bold', e.target.checked)}
                 >
                   {null}
@@ -189,6 +193,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
               <div>
                 <Select
                   size="small"
+                  disabled={rowDisabled}
                   value={emphasisColor(cfg)}
                   placeholder="默认"
                   onChange={(v) => setEmphasis(field.id, 'color', v)}
@@ -209,6 +214,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
               <div>
                 <Checkbox
                   checked={!!cfg?.emphasis?.highlight}
+                  disabled={rowDisabled}
                   onChange={(e) => setEmphasis(field.id, 'highlight', e.target.checked)}
                 >
                   {null}
@@ -218,6 +224,7 @@ export function FieldSection({ config, fields, onChange }: Props) {
                 {isBtn ? (
                   <Button
                     size="small"
+                    disabled={rowDisabled}
                     theme={cfg?.http?.url ? 'light' : 'borderless'}
                     type="primary"
                     onClick={() => setEditingId(field.id)}

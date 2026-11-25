@@ -29,10 +29,16 @@ interface Props {
 /** 筛选字段 / 关键词搜索字段配置 */
 export function SettingsSection({ config, fields, onChange }: Props) {
   // 候选取全表可用字段：不要求字段已加入展示分组，否则无分组时无从勾选
-  const usable = fields.filter((f) => !f.unsupported && !f.isButton);
+  // 但关闭「显示」的字段前端不可见、也不可阅读，不再作为筛选/搜索候选
+  const visibleIds = new Set(config.fields.filter((c) => c.visible !== false).map((c) => c.fieldId));
+  const usable = fields.filter((f) => !f.unsupported && !f.isButton && visibleIds.has(f.id));
 
   const filterable = usable.filter((f) => FILTERABLE_TYPES.includes(f.type));
   const searchable = usable.filter((f) => isTextType(f.type));
+  const filterableIds = new Set(filterable.map((f) => f.id));
+  const searchableIds = new Set(searchable.map((f) => f.id));
+  const filterCount = config.filterFieldIds.filter((id) => filterableIds.has(id)).length;
+  const searchCount = config.searchFieldIds.filter((id) => searchableIds.has(id)).length;
 
   const setFilter = (fieldId: string) =>
     onChange({ ...config, filterFieldIds: toggleId(config.filterFieldIds, fieldId) });
@@ -44,11 +50,11 @@ export function SettingsSection({ config, fields, onChange }: Props) {
       <div className="cfg-card-head">
         <h2>4. 筛选与搜索</h2>
         <span className="cfg-hint">
-          筛选 {config.filterFieldIds.length} 个 · 搜索 {config.searchFieldIds.length} 个
+          筛选 {filterCount} 个 · 搜索 {searchCount} 个
         </span>
       </div>
       <p className="cfg-hint">
-        勾选的字段会出现在浏览页顶部的筛选区。搜索框只支持文本类字段（文本、电话、邮箱、链接），多个搜索字段之间是「或」的关系。
+        勾选的字段会出现在浏览页顶部的筛选区。搜索框只支持文本类字段（文本、电话、邮箱、链接），多个搜索字段之间是「或」的关系。已在字段列表中关闭「显示」的字段不会出现在这里。
       </p>
 
       <div className="pick-block">

@@ -212,6 +212,8 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
     );
     (doc?.main?.items ?? []).forEach((it) => {
       if (!it?.to || !it.from || seen.has(it.to)) return;
+      // 配置中关闭「显示」的字段不参与单据录入：即使配了来源映射也不再出现在表单里
+      if (cfgMap.get(it.to)?.visible === false) return;
       seen.add(it.to);
       ids.push(it.to);
     });
@@ -222,7 +224,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
         (f): f is FieldMetaLite =>
           !!f && !f.unsupported && isEditableType(f.type) && !isLinkType(f.type),
       );
-  }, [config, fieldMap, doc?.contractFieldId, doc?.main]);
+  }, [config, cfgMap, fieldMap, doc?.contractFieldId, doc?.main]);
 
   /** 每张子表的可填字段 */
   const subTargetMap = useMemo(() => {
@@ -574,6 +576,8 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
         // 主表：带出字段以系统值为准，其余取用户输入
         const mainPayload: Record<string, unknown> = {};
         mainDisplay.forEach((f) => {
+          // 配置关闭「可编辑」的字段不写回：带出值仍以系统值提交，纯只读字段跳过
+          if (cfgMap.get(f.id)?.readonly === true && row.auto[f.id] === undefined) return;
           const built = buildFieldValue(
             f.type,
             optionIdValue(mainValueOf(row, f), f, optionsOf(config.tableId, f)),
@@ -856,7 +860,11 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
 
                   <div className={`form-grid cols-${COLS}`}>
                     {mainDisplay.map((field) => {
+                      const cfg = cfgMap.get(field.id);
                       const auto = row.auto[field.id] !== undefined;
+                      // 配置中关闭「可编辑」的字段：与「自动带出」一样按只读渲染，不给录入控件
+                      const readonly = cfg?.readonly === true;
+                      const locked = auto || readonly;
                       const isMissing = !!missing[`${row.key}:${field.id}`];
                       const required = config.fields.some(
                         (c) => c.fieldId === field.id && c.required,
@@ -864,7 +872,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
                       return (
                         <div className={`form-item${isMissing ? ' missing' : ''}`} key={field.id}>
                           <label className="form-label">
-                            {fieldLabel(field, cfgMap.get(field.id))}
+                            {fieldLabel(field, cfg)}
                             {required ? <i className="field-required">*</i> : null}
                             {groupFieldIds.has(field.id) ? null : (
                               <Tag size="small" color="blue">
@@ -872,11 +880,13 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
                               </Tag>
                             )}
                           </label>
-                          {auto ? (
+                          {locked ? (
                             <div className="form-readonly">
-                              {autoText(row.auto[field.id], field, optionsOf(config.tableId, field)) || '—'}
-                              <Tag size="small" color="green">
-                                自动带出
+                              {auto
+                                ? autoText(row.auto[field.id], field, optionsOf(config.tableId, field)) || '—'
+                                : '—'}
+                              <Tag size="small" color={auto ? 'green' : 'grey'}>
+                                {auto ? '自动带出' : '只读'}
                               </Tag>
                             </div>
                           ) : (

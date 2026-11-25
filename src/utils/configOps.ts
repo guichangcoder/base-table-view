@@ -305,6 +305,6 @@ export function reorderFieldInGroup(
 
 /** 分组内字段 id 对应的有效配置（过滤不可见/已删除） */
 export function visibleFieldIds(config: PluginData, group: GroupConfig): string[] {
-  const hidden = new Set(config.fields.filter((f) => !f.visible).map((f) => f.fieldId));
+  const hidden = new Set(config.fields.filter((f) => f.visible === false).map((f) => f.fieldId));
   return group.fieldIds.filter((id) => !hidden.has(id));
 }

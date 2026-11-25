@@ -2,22 +2,20 @@ import { useEffect, useState } from 'react';
 import { Button, Toast } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { ButtonHttpConfig, FieldMetaLite, HttpBodyFormat } from '../../types';
-import { getBaseToken, getUi } from '../../services/appContext';
+import { getBaseToken } from '../../services/appContext';
 import { BUTTON_TYPE, getTableCached, listFieldsCached } from '../../services/baseService';
 import { getRecordById } from '../../services/recordService';
 import { formatCellValue } from '../../utils/valueConverter';
-import { HOST_TIMEOUT, METADATA_TIMEOUT, withTimeout } from '../../utils/timeout';
+import { METADATA_TIMEOUT, withTimeout } from '../../utils/timeout';
 
 /**
  * 数据表「按钮」字段在前端的呈现。
  *
  * JSSDK 没有触发按钮动作的接口，按钮绑定的自动化/工作流只能由数据表执行。
- * 因此按优先级把点击落到「真实按钮」上：
- *   1. 配置了「自动化 Webhook 地址」时，读出本记录各字段的值并 POST 到该地址
- *      （自动化触发条件选「接收到 webhook 时」，即可在流程里引用这些字段）；
- *   2. 未配置时尝试调用宿主原生 UI（showFieldValueEditor / showRecordDetailDialog），在其中点真实按钮；
- *   3. 宿主不支持时给出明确提示，不跳转数据表，也不静默失败。
- * 宿主未实现某个 UI 接口时会抛 NotSupportedError 或 Promise 永不 settle，故调用带超时兜底。
+ * 因此点击按钮时按配置的 HTTP 请求发出触发（配置见「字段配置」的按钮动作弹窗）：
+ *   1. 配置了按钮动作：读取本记录字段并按配置的方法/地址/参数/请求头/请求体发送；
+ *   2. 未配置：给出明确提示，引导到配置页；
+ * 不调用宿主的字段编辑器/记录详情弹窗——在应用模式插件里这类接口会让宿主容器渲染失败（整页白屏）。
  */
 
 const FT = FieldType as any;
@@ -262,41 +260,6 @@ async function collectRecordPayload(tableId: string, recordId: string): Promise<
   return { fields, raw, byId, rawById };
 }
 
-/** 调用宿主原生 UI，返回 true 表示已经打开真实按钮、用户可在此处点击执行 */
-async function tryHostButtonUi(
-  tableId: string,
-  recordId: string,
-  fieldId: string,
-  viewId: string,
-): Promise<boolean> {
-  const ui = getUi() as any;
-  if (!ui) return false;
-
-  const call = async (label: string, fn: () => any): Promise<boolean> => {
-    try {
-      const ok = await withTimeout(Promise.resolve(fn()), HOST_TIMEOUT, label);
-      return ok !== false;
-    } catch {
-      return false;
-    }
-  };
-
-  if (viewId && typeof ui.showFieldValueEditor === 'function') {
-    if (await call('showFieldValueEditor', () => ui.showFieldValueEditor({ tableId, viewId, recordId, fieldId }))) {
-      return true;
-    }
-  }
-  if (typeof ui.showRecordDetailDialog === 'function') {
-    if (await call('showRecordDetailDialog', () => ui.showRecordDetailDialog({ tableId, recordId, fieldIdList: [fieldId] }))) {
-      return true;
-    }
-    if (await call('showRecordDetailDialog', () => ui.showRecordDetailDialog({ tableId, recordId }))) {
-      return true;
-    }
-  }
-  return false;
-}
-
 interface Props {
   tableId?: string;
   /** 记录 id（新增态还没有记录，无法执行按钮动作） */
@@ -365,34 +328,31 @@ export function RecordButton({ tableId, recordId, field, title, http, fieldLabel
   };
 
   const handleClick = async () => {
-    if (!tableId) {
-      Toast.warning('尚未配置数据表，无法执行按钮动作');
-      return;
-    }
-    if (!recordId) {
-      Toast.info('请先保存记录，保存后即可点击按钮执行');
-      return;
-    }
-
-    setBusy(true);
     try {
-      // 1) 配置了按钮动作：按配置发送请求，等同于点数据表里的按钮
-      if (http && http.url.trim()) {
-        await fireRequest(http);
+      if (!tableId) {
+        Toast.warning('尚未配置数据表，无法执行按钮动作');
+        return;
+      }
+      if (!recordId) {
+        Toast.info('请先保存记录，保存后即可点击按钮执行');
         return;
       }
 
-      const viewId = await firstViewId(tableId);
-
-      // 2) 未配置动作：调用宿主原生按钮 UI（不跳转数据表）
-      if (await tryHostButtonUi(tableId, recordId, field.id, viewId)) {
-        Toast.info('已打开数据表原生按钮界面，请点击其中的按钮执行');
-        return;
+      setBusy(true);
+      try {
+        if (http && http.url.trim()) {
+          await fireRequest(http);
+          return;
+        }
+        Toast.warning('该按钮尚未配置动作，请在配置页「3. 字段配置」中点击「配置」后使用');
+      } finally {
+        setBusy(false);
       }
-
-      Toast.warning('该按钮尚未配置动作，请在配置页「3. 字段配置」中点击「配置」后使用');
-    } finally {
+    } catch (e) {
+      // 任何异常都只在本组件内消化，避免冒泡到宿主容器导致整页渲染失败
+      console.error('[RecordButton] 按钮执行异常:', e);
       setBusy(false);
+      Toast.error('按钮执行出现异常，请检查按钮动作配置（详见控制台日志）');
     }
   };
 

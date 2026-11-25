@@ -128,13 +128,22 @@ export function Workbench({ config }: Props) {
 
   const fieldMap = useMemo(() => new Map(fields.map((f) => [f.id, f])), [fields]);
 
+  // 配置关闭「显示」的字段前端不可阅读：筛选/搜索控件（下拉会列出选项值）也不再出现
+  const hiddenFieldIds = useMemo(
+    () => new Set(config.fields.filter((c) => c.visible === false).map((c) => c.fieldId)),
+    [config.fields],
+  );
   // 未在配置面板勾选时回退到全表可用字段，避免「控件在但点了没反应」
-  const effectiveFilterIds = config.filterFieldIds.length
-    ? config.filterFieldIds
-    : fields.filter((f) => !f.unsupported && !f.isButton && FILTERABLE_TYPES.includes(f.type)).map((f) => f.id);
-  const effectiveSearchIds = config.searchFieldIds.length
-    ? config.searchFieldIds
-    : fields.filter((f) => !f.unsupported && !f.isButton && isTextType(f.type)).map((f) => f.id);
+  const effectiveFilterIds = (
+    config.filterFieldIds.length
+      ? config.filterFieldIds
+      : fields.filter((f) => !f.unsupported && !f.isButton && FILTERABLE_TYPES.includes(f.type)).map((f) => f.id)
+  ).filter((id) => !hiddenFieldIds.has(id));
+  const effectiveSearchIds = (
+    config.searchFieldIds.length
+      ? config.searchFieldIds
+      : fields.filter((f) => !f.unsupported && !f.isButton && isTextType(f.type)).map((f) => f.id)
+  ).filter((id) => !hiddenFieldIds.has(id));
 
   // 1) 元信息
   useEffect(() => {
