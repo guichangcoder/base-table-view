@@ -224,6 +224,7 @@ export function ButtonActionDialog({ visible, field, value, fields, onCancel, on
           <div className="btn-action-tip">
             值支持动态占位符：{RECORD_ID_TOKEN} 取当前记录 id（新增参数行默认填入），
             {'{{字段名}}'} 或 {'{{字段别名}}'} 取本条记录字段值；未匹配的占位符原样保留。
+            该 id 是主表中该行真实的 record ID，未保存的新记录没有 id，按钮会置灰不可点击。
           </div>
         </div>
 

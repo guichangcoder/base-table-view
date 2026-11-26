@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Toast } from '@douyinfe/semi-ui';
+import { Button, Toast, Tooltip } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { ButtonHttpConfig, FieldMetaLite, HttpBodyFormat } from '../../types';
 import { getBaseToken } from '../../services/appContext';
@@ -377,15 +377,23 @@ export function RecordButton({ tableId, recordId, field, title, http, fieldLabel
     }
   };
 
+  // 只有已保存的记录才有真实 record ID；新增态由 RecordForm 传 undefined，此时禁用按钮
+  const locked = !recordId;
+
   return (
-    <Button
-      className="record-button"
-      theme="solid"
-      loading={busy}
-      style={{ background: bg, borderColor: bg, color: '#fff' }}
-      onClick={() => void handleClick()}
-    >
-      {text}
-    </Button>
+    <Tooltip content={locked ? '记录保存后可点击（未保存时没有记录 ID）' : ''} position="top">
+      <span style={{ display: 'inline-flex' }}>
+        <Button
+          className="record-button"
+          theme="solid"
+          disabled={locked}
+          loading={busy}
+          style={locked ? undefined : { background: bg, borderColor: bg, color: '#fff' }}
+          onClick={() => void handleClick()}
+        >
+          {text}
+        </Button>
+      </span>
+    </Tooltip>
   );
 }
