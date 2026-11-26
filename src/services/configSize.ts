@@ -1,6 +1,7 @@
 import {
   CONFIG_VERSION,
   emptyConfig,
+  type ButtonDisableRule,
   type ButtonHttpConfig,
   type DocConfig,
   type DocMapItem,
@@ -31,6 +32,33 @@ export function estimateConfigBytes(data: unknown): number {
 
 const HTTP_BODY_FORMATS: HttpBodyFormat[] = ['json', 'urlencoded', 'text'];
 
+/** 禁用条件支持的运算符（复用筛选条件集合） */
+const DISABLE_OPERATORS: ButtonDisableRule['operator'][] = [
+  'contains',
+  'is',
+  'isNotEmpty',
+  'isGreater',
+  'isLess',
+];
+
+function isDisableOperator(v: unknown): v is ButtonDisableRule['operator'] {
+  return DISABLE_OPERATORS.includes(v as ButtonDisableRule['operator']);
+}
+
+/** 禁用条件瘦身：丢弃字段为空的项，非法运算符回退 is，值统一成字符串 */
+function compactDisableRules(rules?: ButtonDisableRule[]): ButtonDisableRule[] {
+  return (rules ?? [])
+    .filter((r) => !!r && String(r.fieldId ?? '').trim())
+    .map((r) => {
+      const operator = isDisableOperator(r.operator) ? r.operator : 'is';
+      return {
+        fieldId: String(r.fieldId).trim(),
+        operator,
+        value: operator === 'isNotEmpty' ? '' : String(r.value ?? ''),
+      };
+    });
+}
+
 function compactPairs(pairs?: HttpPair[]): HttpPair[] {
   return (pairs ?? [])
     .filter((p) => !!p && String(p.k ?? '').trim())
@@ -57,6 +85,13 @@ function compactHttp(h?: ButtonHttpConfig): ButtonHttpConfig | undefined {
       : 'json';
     out.body = String(h?.body ?? '');
   }
+  const rules = compactDisableRules(h?.disableRules);
+  if (rules.length) out.disableRules = rules;
+  const hint = (h?.disableHint ?? '').trim();
+  if (hint) out.disableHint = hint;
+  if (h?.confirmBeforeSend) out.confirmBeforeSend = true;
+  const confirmText = (h?.confirmText ?? '').trim();
+  if (confirmText) out.confirmText = confirmText;
   return out;
 }
 
@@ -152,6 +187,25 @@ function hydratePairs(raw: unknown): HttpPair[] {
   return out;
 }
 
+/** 读取禁用条件；字段为空或结构非法时丢弃，旧配置没有该字段时返回 undefined */
+function hydrateDisableRules(raw: unknown): ButtonDisableRule[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: ButtonDisableRule[] = [];
+  raw.forEach((it) => {
+    if (!it || typeof it !== 'object') return;
+    const r = it as Partial<ButtonDisableRule>;
+    const fieldId = typeof r.fieldId === 'string' ? r.fieldId.trim() : '';
+    if (!fieldId) return;
+    const operator = isDisableOperator(r.operator) ? r.operator : 'is';
+    out.push({
+      fieldId,
+      operator,
+      value: operator === 'isNotEmpty' ? '' : String(r.value ?? ''),
+    });
+  });
+  return out.length ? out : undefined;
+}
+
 /** 读取按钮 HTTP 配置；旧版 webhookUrl 自动升级成 POST + 自动全集 */
 function hydrateHttp(raw: unknown, legacyUrl?: unknown): ButtonHttpConfig | undefined {
   if (raw && typeof raw === 'object') {
@@ -169,6 +223,10 @@ function hydrateHttp(raw: unknown, legacyUrl?: unknown): ButtonHttpConfig | unde
         ? (h.bodyFormat as HttpBodyFormat)
         : 'json',
       body: template ? String(h.body ?? '') : undefined,
+      disableRules: hydrateDisableRules(h.disableRules),
+      disableHint: typeof h.disableHint === 'string' && h.disableHint.trim() ? h.disableHint.trim() : undefined,
+      confirmBeforeSend: h.confirmBeforeSend === true,
+      confirmText: typeof h.confirmText === 'string' && h.confirmText.trim() ? h.confirmText.trim() : undefined,
     };
   }
   if (typeof legacyUrl === 'string' && legacyUrl.trim()) {

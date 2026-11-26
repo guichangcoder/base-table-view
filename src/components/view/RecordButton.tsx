@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Button, Toast, Tooltip } from '@douyinfe/semi-ui';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Modal, Toast, Tooltip } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
-import type { ButtonHttpConfig, FieldMetaLite, HttpBodyFormat } from '../../types';
+import type { ButtonDisableRule, ButtonHttpConfig, FieldMetaLite, HttpBodyFormat, RecordRow } from '../../types';
 import { getBaseToken } from '../../services/appContext';
 import { BUTTON_TYPE, getTableCached, listFieldsCached } from '../../services/baseService';
 import { getRecordById } from '../../services/recordService';
@@ -64,6 +64,49 @@ async function firstViewId(tableId: string): Promise<string> {
 
 /** 请求结果：ok=宿主返回成功；sent=已发出但读不到响应；failed=发不出去 */
 type TriggerResult = 'ok' | 'sent' | 'failed';
+
+/**
+ * 禁用条件求值：字段值先复用 formatCellValue 转成展示文本（单选/多选按选项文本比较），
+ * is=全等、contains=包含、isNotEmpty=去空后非空、isGreater/isLess 转不成数字视为不命中。
+ */
+function ruleHit(
+  rule: ButtonDisableRule,
+  cells: Record<string, unknown>,
+  byId: Map<string, FieldMetaLite>,
+): boolean {
+  const text = formatCellValue(cells[rule.fieldId], byId.get(rule.fieldId)).trim();
+  const expected = (rule.value ?? '').trim();
+  switch (rule.operator) {
+    case 'isNotEmpty':
+      return text !== '';
+    case 'is':
+      return text === expected;
+    case 'contains':
+      return expected !== '' && text.includes(expected);
+    case 'isGreater':
+    case 'isLess': {
+      if (!text || !expected) return false;
+      const a = Number(text);
+      const b = Number(expected);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+      return rule.operator === 'isGreater' ? a > b : a < b;
+    }
+    default:
+      return false;
+  }
+}
+
+/** 二次确认：确认返回 true，取消返回 false */
+function confirmSend(text?: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    Modal.confirm({
+      title: '确认操作',
+      content: text?.trim() || '确认发送该请求？',
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
+}
 
 interface SendOutcome {
   result: TriggerResult;
@@ -290,9 +333,22 @@ interface Props {
   http?: ButtonHttpConfig;
   /** 展示别名映射（字段 id → 别名），模板里用 {{别名}} 引用字段时需要 */
   fieldLabels?: Record<string, string>;
+  /** 当前记录（用于禁用条件实时求值） */
+  record?: RecordRow | null;
+  /** 全部字段元信息（用于把单元格值转成展示文本后比较） */
+  fields?: FieldMetaLite[];
 }
 
-export function RecordButton({ tableId, recordId, field, title, http, fieldLabels }: Props) {
+export function RecordButton({
+  tableId,
+  recordId,
+  field,
+  title,
+  http,
+  fieldLabels,
+  record,
+  fields,
+}: Props) {
   const text = title || field.buttonTitle || field.name || '按钮';
   const bg = buttonColor(field.buttonColor);
   const [busy, setBusy] = useState(false);
@@ -326,7 +382,7 @@ export function RecordButton({ tableId, recordId, field, title, http, fieldLabel
     Object.entries(fieldLabels ?? {}).forEach(([id, alias]) => {
       if (alias) aliasToId[alias] = id;
     });
-    const { result, degraded } = await sendRequest(cfg, autoPayload, {
+    const { result } = await sendRequest(cfg, autoPayload, {
       ...payload,
       aliasToId,
       // 内置变量：Params / Headers / 请求体模板里都可引用当前记录 id
@@ -337,11 +393,7 @@ export function RecordButton({ tableId, recordId, field, title, http, fieldLabel
       return true;
     }
     if (result === 'sent') {
-      Toast.info(
-        degraded
-          ? '已发送请求（跨域限制下无法读取结果，自定义请求头未生效）'
-          : '已发送请求（跨域限制下无法读取响应结果）',
-      );
+      Toast.info('已发送请求');
       return true;
     }
     Toast.error('按钮触发失败：无法访问该请求地址，请检查地址与跨域设置');
@@ -357,6 +409,12 @@ export function RecordButton({ tableId, recordId, field, title, http, fieldLabel
       if (!recordId) {
         Toast.info('请先保存记录，保存后即可点击按钮执行');
         return;
+      }
+
+      // 开启「点击前二次确认」时先弹确认框，取消则不发请求
+      if (http && http.url.trim() && http.confirmBeforeSend) {
+        const ok = await confirmSend(http.confirmText);
+        if (!ok) return;
       }
 
       setBusy(true);
@@ -379,16 +437,29 @@ export function RecordButton({ tableId, recordId, field, title, http, fieldLabel
 
   // 只有已保存的记录才有真实 record ID；新增态由 RecordForm 传 undefined，此时禁用按钮
   const locked = !recordId;
+  const fieldById = useMemo(() => new Map((fields ?? []).map((f) => [f.id, f])), [fields]);
+  // 禁用条件按当前记录实时求值：命中任意一条即置灰
+  const hitRule = useMemo(
+    () => (http?.disableRules ?? []).some((r) => ruleHit(r, record?.fields ?? {}, fieldById)),
+    [http?.disableRules, record?.fields, fieldById],
+  );
+  const blocked = locked || hitRule;
+  // 无 recordId 时沿用原有提示语；命中禁用条件时用配置的提示语，未填则兜底
+  const tip = locked
+    ? '记录保存后可点击（未保存时没有记录 ID）'
+    : hitRule
+      ? http?.disableHint?.trim() || '当前状态不可点击'
+      : '';
 
   return (
-    <Tooltip content={locked ? '记录保存后可点击（未保存时没有记录 ID）' : ''} position="top">
+    <Tooltip content={tip} position="top">
       <span style={{ display: 'inline-flex' }}>
         <Button
           className="record-button"
           theme="solid"
-          disabled={locked}
+          disabled={blocked}
           loading={busy}
-          style={locked ? undefined : { background: bg, borderColor: bg, color: '#fff' }}
+          style={blocked ? undefined : { background: bg, borderColor: bg, color: '#fff' }}
           onClick={() => void handleClick()}
         >
           {text}

@@ -705,6 +705,14 @@ p.cfg-hint {
   color: var(--c-text-3);
 }
 
+/* 禁用条件行：字段 / 运算符 / 值 / 删除 */
+.disable-rule-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1.4fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
 /* ---------------------------------------------------------------- 筛选 / 搜索字段选择 */
 
 .pick-block {

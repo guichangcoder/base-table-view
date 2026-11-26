@@ -10,6 +10,13 @@ export interface HttpPair {
  */
 export type HttpBodyFormat = 'json' | 'urlencoded' | 'text';
 
+/** 按钮禁用条件：按当前记录求值，命中任一条件即不可点击 */
+export interface ButtonDisableRule {
+  fieldId: string;
+  operator: 'contains' | 'is' | 'isNotEmpty' | 'isGreater' | 'isLess';
+  value: string;
+}
+
 /**
  * 按钮字段的 HTTP 请求配置，对齐数据表工作流「发送 HTTP 请求」节点：
  * 请求方法 + 请求地址 + 请求参数 + 请求头 + 请求体。
@@ -32,6 +39,14 @@ export interface ButtonHttpConfig {
   bodyFormat?: HttpBodyFormat;
   /** 自定义模板内容（bodyMode = template 时生效） */
   body?: string;
+  /** 禁用条件：命中任一条件时按钮置灰不可点击（按当前记录实时求值） */
+  disableRules?: ButtonDisableRule[];
+  /** 禁用提示语，未填时前端兜底「当前状态不可点击」 */
+  disableHint?: string;
+  /** 点击前是否二次确认，默认关闭 */
+  confirmBeforeSend?: boolean;
+  /** 二次确认文案，未填时前端兜底「确认发送该请求？」 */
+  confirmText?: string;
 }
 
 /** 字段强调样式 */

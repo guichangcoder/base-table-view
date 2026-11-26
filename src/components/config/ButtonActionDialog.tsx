@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Button, Input, Modal, Select, Tag, TextArea, Toast } from '@douyinfe/semi-ui';
-import type { ButtonHttpConfig, FieldMetaLite, HttpBodyFormat, HttpPair } from '../../types';
+import { Button, Checkbox, Input, Modal, Select, Tag, TextArea, Toast } from '@douyinfe/semi-ui';
+import type { ButtonDisableRule, ButtonHttpConfig, FieldMetaLite, HttpBodyFormat, HttpPair } from '../../types';
+import { isButtonType } from '../../services/baseService';
 
 /**
  * 按钮动作配置弹窗：对齐数据表工作流「发送 HTTP 请求」节点。
@@ -31,6 +32,15 @@ function defaultParams(): HttpPair[] {
   return [{ k: '', v: RECORD_ID_TOKEN }];
 }
 
+/** 禁用条件运算符（复用筛选运算符集合，只换中文文案） */
+const DISABLE_OPERATORS: Array<{ label: string; value: ButtonDisableRule['operator'] }> = [
+  { label: '等于', value: 'is' },
+  { label: '包含', value: 'contains' },
+  { label: '不为空', value: 'isNotEmpty' },
+  { label: '大于', value: 'isGreater' },
+  { label: '小于', value: 'isLess' },
+];
+
 function emptyDraft(): ButtonHttpConfig {
   return {
     method: 'POST',
@@ -40,6 +50,10 @@ function emptyDraft(): ButtonHttpConfig {
     bodyMode: 'auto',
     bodyFormat: 'json',
     body: '',
+    disableRules: [],
+    disableHint: '',
+    confirmBeforeSend: false,
+    confirmText: '',
   };
 }
 
@@ -55,6 +69,10 @@ function withDraft(value?: ButtonHttpConfig): ButtonHttpConfig {
     ...value,
     params: blankParams ? defaultParams() : params,
     headers: value.headers?.length ? value.headers : base.headers,
+    disableRules: value.disableRules?.length ? value.disableRules : [],
+    disableHint: value.disableHint ?? '',
+    confirmBeforeSend: !!value.confirmBeforeSend,
+    confirmText: value.confirmText ?? '',
   };
 }
 
@@ -117,6 +135,72 @@ function PairEditor({ pairs, onChange, keyPlaceholder, valuePlaceholder, newRowV
   );
 }
 
+interface DisableRuleEditorProps {
+  rules: ButtonDisableRule[];
+  /** 可选字段（已排除按钮字段） */
+  fieldOptions: Array<{ label: string; value: string }>;
+  onChange: (next: ButtonDisableRule[]) => void;
+}
+
+/** 禁用条件行编辑器：字段 + 运算符 + 值，命中任意一行即不可点击 */
+function DisableRuleEditor({ rules, fieldOptions, onChange }: DisableRuleEditorProps) {
+  if (!fieldOptions.length && !rules.length) {
+    return <div className="btn-action-tip">暂无可配置的字段（按钮字段不能作为禁用条件）。</div>;
+  }
+  const setRow = (i: number, patch: Partial<ButtonDisableRule>) => {
+    onChange(rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  };
+  return (
+    <div className="kv-editor">
+      {rules.map((row, i) => (
+        <div className="disable-rule-row" key={i}>
+          <Select
+            size="small"
+            value={row.fieldId || undefined}
+            placeholder="选择字段"
+            optionList={fieldOptions}
+            onChange={(v) => setRow(i, { fieldId: String(v ?? '') })}
+          />
+          <Select
+            size="small"
+            value={row.operator}
+            optionList={DISABLE_OPERATORS}
+            onChange={(v) => {
+              const operator = v as ButtonDisableRule['operator'];
+              setRow(i, { operator, ...(operator === 'isNotEmpty' ? { value: '' } : null) });
+            }}
+          />
+          <Input
+            size="small"
+            value={row.value}
+            disabled={row.operator === 'isNotEmpty'}
+            placeholder="值"
+            onChange={(v) => setRow(i, { value: v })}
+          />
+          <Button
+            size="small"
+            theme="borderless"
+            type="tertiary"
+            onClick={() => onChange(rules.filter((_, idx) => idx !== i))}
+          >
+            删除
+          </Button>
+        </div>
+      ))}
+      {fieldOptions.length ? (
+        <Button
+          size="small"
+          theme="borderless"
+          type="primary"
+          onClick={() => onChange([...rules, { fieldId: '', operator: 'is', value: '' }])}
+        >
+          + 添加条件
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 interface Props {
   visible: boolean;
   /** 当前配置的字段（按钮字段） */
@@ -164,6 +248,10 @@ export function ButtonActionDialog({ visible, field, value, fields, onCancel, on
 
   const bodyDisabled = draft.method === 'GET';
   const tokens = fields.filter((f) => !f.isButton);
+  // 禁用条件候选字段：按钮字段没有可比较的值，排除
+  const ruleFieldOptions = fields
+    .filter((f) => !f.isButton && !isButtonType(f.type))
+    .map((f) => ({ label: f.name, value: f.id }));
 
   return (
     <Modal
@@ -299,6 +387,54 @@ export function ButtonActionDialog({ visible, field, value, fields, onCancel, on
               </div>
             </>
           )}
+        </div>
+
+        <div className="btn-action-block">
+          <div className="btn-action-label">点击控制</div>
+          <div className="btn-action-tip">
+            禁用条件按当前记录实时求值，命中任意一条时按钮置灰不可点击，鼠标悬停显示提示语；
+            点击前二次确认默认关闭。
+          </div>
+
+          <div className="btn-action-block">
+            <div className="btn-action-label">禁用条件</div>
+            <DisableRuleEditor
+              rules={draft.disableRules ?? []}
+              fieldOptions={ruleFieldOptions}
+              onChange={(next) => patch({ disableRules: next })}
+            />
+          </div>
+
+          <div className="btn-action-block">
+            <div className="btn-action-label">禁用提示语</div>
+            <Input
+              value={draft.disableHint ?? ''}
+              placeholder="当前状态不可点击"
+              onChange={(v) => patch({ disableHint: v })}
+            />
+          </div>
+
+          <div className="btn-action-block">
+            <div className="btn-action-label">点击前二次确认</div>
+            <Checkbox
+              checked={!!draft.confirmBeforeSend}
+              onChange={(e) =>
+                patch({
+                  confirmBeforeSend: !!e.target.checked,
+                  ...(e.target.checked ? null : { confirmText: '' }),
+                })
+              }
+            >
+              开启后点击按钮先弹确认框，确认后才发送请求（默认关闭）
+            </Checkbox>
+            {draft.confirmBeforeSend ? (
+              <Input
+                value={draft.confirmText ?? ''}
+                placeholder="确认发送该请求？"
+                onChange={(v) => patch({ confirmText: v })}
+              />
+            ) : null}
+          </div>
         </div>
 
         <div className="btn-action-block">

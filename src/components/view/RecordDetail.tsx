@@ -193,6 +193,8 @@ export function RecordDetail({ config, fields, record }: Props) {
                         title={cfg?.label || field.buttonTitle || field.name}
                         http={cfg?.http}
                         fieldLabels={labelMap}
+                        record={record}
+                        fields={fields}
                       />
                     ) : (
                       <div

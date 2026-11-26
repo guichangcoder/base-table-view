@@ -270,6 +270,8 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
           title={cfg?.label || undefined}
           http={cfg?.http}
           fieldLabels={labelMap}
+          record={record}
+          fields={fields}
         />
       );
     }
