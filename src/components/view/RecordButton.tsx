@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Modal, Toast, Tooltip } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { ButtonDisableRule, ButtonHttpConfig, FieldMetaLite, HttpBodyFormat, RecordRow } from '../../types';
@@ -108,12 +108,6 @@ function confirmSend(text?: string): Promise<boolean> {
   });
 }
 
-interface SendOutcome {
-  result: TriggerResult;
-  /** 降级成 no-cors 简单请求：自定义请求头被浏览器丢弃 */
-  degraded: boolean;
-}
-
 const CONTENT_TYPE: Record<HttpBodyFormat, string> = {
   json: 'application/json',
   urlencoded: 'application/x-www-form-urlencoded',
@@ -196,37 +190,45 @@ function renderTemplate(template: string, format: HttpBodyFormat, ctx: TemplateC
 }
 
 /**
- * 探测目标地址是否允许浏览器跨域读取响应。
- * 同源直接放行；跨域先发一次 OPTIONS 预判，避免"真实请求先发一次、失败后再补发一次"造成重复提交。
+ * 探测/补发都不要做：任何额外的 HTTP 请求都会让接收方把一次点击当成两次。
+ * 这里只做纯本地的判定，最终只投递一次真实请求。
  */
-async function corsReadable(url: string): Promise<boolean> {
-  let target: URL;
+function isSameOrigin(url: string): boolean {
   try {
-    target = new URL(url, window.location.href);
+    return new URL(url, window.location.href).origin === window.location.origin;
   } catch {
     return true;
   }
-  if (target.origin === window.location.origin) return true;
-  try {
-    await fetch(url, { method: 'OPTIONS', mode: 'cors' });
-    return true;
-  } catch {
-    return false;
-  }
+}
+
+const SIMPLE_CONTENT_TYPES = ['text/plain', 'multipart/form-data', 'application/x-www-form-urlencoded'];
+
+/** CORS 简单请求判定：简单请求不触发预检，CORS 模式下浏览器也一定会把请求投递出去 */
+function isSimpleRequest(method: string, headers: Record<string, string>): boolean {
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') return false;
+  return Object.entries(headers).every(([k, v]) => {
+    const name = k.toLowerCase();
+    if (name === 'content-type') {
+      return SIMPLE_CONTENT_TYPES.includes(v.split(';')[0].trim().toLowerCase());
+    }
+    return name === 'accept' || name === 'accept-language' || name === 'content-language';
+  });
 }
 
 /**
  * 按配置发送 HTTP 请求（对齐工作流「发送 HTTP 请求」节点）。
  *
- * 浏览器限制：跨域且预检不通过时读不到响应，此时只发一次 no-cors 简单请求
- * （一定发得出去，但读不到响应、自定义头会被丢弃）。通过预检判定后再选发送方式，
- * 保证一次点击只投递一次真实请求。
+ * 一次点击只投递一次：
+ * - 同源 / 简单请求：直接 CORS 发一次；跨域简单请求即使读不到响应，请求也已送达（不回退补发）。
+ * - 跨域且非简单请求（如 JSON 请求体）：浏览器会先发预检，目标未开放跨域时真实请求不会被投递。
+ *   没有自定义请求头时直接用 no-cors 发一次（无预检）；配置了自定义请求头则只能走 CORS，
+ *   失败时提示用户，绝不重发——重发就是"一次点击两条请求"的根因。
  */
 async function sendRequest(
   cfg: ButtonHttpConfig,
   autoPayload: Record<string, unknown>,
   ctx: TemplateContext,
-): Promise<SendOutcome> {
+): Promise<TriggerResult> {
   const method = (cfg.method || 'POST').toUpperCase();
   const url = buildUrl(cfg.url.trim(), cfg.params, ctx);
   const headers: Record<string, string> = {};
@@ -248,28 +250,31 @@ async function sendRequest(
     }
   }
 
-  // 跨域且读不到响应时走 no-cors：只投递一次，避免"先发一次再补发"导致重复提交
-  if (!(await corsReadable(url))) {
-    // no-cors 只允许简单方法与简单 Content-Type，其余自定义头会被浏览器丢弃
+  // 跨域且非简单请求：预检会拦住真实请求，未配置自定义头时改用 no-cors 只发一次
+  const sameOrigin = isSameOrigin(url);
+  const simple = isSimpleRequest(method, headers);
+  if (!sameOrigin && !simple && !customHeader && (method === 'GET' || method === 'HEAD' || method === 'POST')) {
+    // no-cors 只允许简单请求头，非简单 Content-Type 会被浏览器丢弃（转为 text/plain）
     const simpleHeaders: Record<string, string> = {};
     const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type');
-    const ct = ctKey ? headers[ctKey] : '';
+    const ct = ctKey ? headers[ctKey].split(';')[0].trim().toLowerCase() : '';
     if (ct === 'text/plain' || ct === 'application/x-www-form-urlencoded') {
-      simpleHeaders['Content-Type'] = ct;
+      simpleHeaders['Content-Type'] = headers[ctKey as string];
     }
     try {
       await fetch(url, { method, mode: 'no-cors', headers: simpleHeaders, body });
-      return { result: 'sent', degraded: customHeader };
+      return 'sent';
     } catch {
-      return { result: 'failed', degraded: false };
+      return 'failed';
     }
   }
 
   try {
     const res = await fetch(url, { method, headers, body });
-    return { result: res.ok ? 'ok' : 'failed', degraded: false };
+    return res.ok ? 'ok' : 'failed';
   } catch {
-    return { result: 'failed', degraded: false };
+    // 跨域简单请求读不到响应不代表没发出去，请求已送达；同源失败才是真的发不出去
+    return !sameOrigin && simple ? 'sent' : 'failed';
   }
 }
 
@@ -377,6 +382,8 @@ export function RecordButton({
   const text = title || field.buttonTitle || field.name || '按钮';
   const bg = buttonColor(field.buttonColor);
   const [busy, setBusy] = useState(false);
+  /** 同步防重入：state 更新是异步的，快速双击会在 busy 生效前再次进入 */
+  const firingRef = useRef(false);
 
   // 提前取好 viewId，缩短点击后的等待
   useEffect(() => {
@@ -407,7 +414,7 @@ export function RecordButton({
     Object.entries(fieldLabels ?? {}).forEach(([id, alias]) => {
       if (alias) aliasToId[alias] = id;
     });
-    const { result } = await sendRequest(cfg, autoPayload, {
+    const result = await sendRequest(cfg, autoPayload, {
       ...payload,
       aliasToId,
       // 内置变量：Params / Headers / 请求体模板里都可引用当前记录 id
@@ -426,6 +433,9 @@ export function RecordButton({
   };
 
   const handleClick = async () => {
+    // 同步加锁：确认框打开期间或请求进行中的重复点击直接忽略，保证一次操作只发一条请求
+    if (firingRef.current) return;
+    firingRef.current = true;
     try {
       if (!tableId) {
         Toast.warning('尚未配置数据表，无法执行按钮动作');
@@ -443,20 +453,18 @@ export function RecordButton({
       }
 
       setBusy(true);
-      try {
-        if (http && http.url.trim()) {
-          await fireRequest(http);
-          return;
-        }
-        Toast.warning('该按钮尚未配置动作，请在配置页「3. 字段配置」中点击「配置」后使用');
-      } finally {
-        setBusy(false);
+      if (http && http.url.trim()) {
+        await fireRequest(http);
+        return;
       }
+      Toast.warning('该按钮尚未配置动作，请在配置页「3. 字段配置」中点击「配置」后使用');
     } catch (e) {
       // 任何异常都只在本组件内消化，避免冒泡到宿主容器导致整页渲染失败
       console.error('[RecordButton] 按钮执行异常:', e);
-      setBusy(false);
       Toast.error('按钮执行出现异常，请检查按钮动作配置（详见控制台日志）');
+    } finally {
+      setBusy(false);
+      firingRef.current = false;
     }
   };
 

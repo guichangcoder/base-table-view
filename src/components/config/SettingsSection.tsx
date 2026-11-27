@@ -2,7 +2,7 @@ import { Checkbox, Tag } from '@douyinfe/semi-ui';
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, PluginData } from '../../types';
 import { toggleId } from '../../utils/configOps';
-import { isTextType } from '../../services/baseService';
+import { isSearchableType } from '../../services/baseService';
 
 const FT = FieldType as any;
 
@@ -36,27 +36,21 @@ export function SettingsSection({ config, fields, onChange }: Props) {
   const usable = fields.filter((f) => !f.unsupported && !f.isButton && visibleIds.has(f.id));
 
   const filterable = usable.filter((f) => FILTERABLE_TYPES.includes(f.type));
-  const searchable = usable.filter((f) => isTextType(f.type));
+  const searchable = usable.filter((f) => isSearchableType(f.type));
   const filterableIds = new Set(filterable.map((f) => f.id));
-  const searchableIds = new Set(searchable.map((f) => f.id));
   const filterCount = config.filterFieldIds.filter((id) => filterableIds.has(id)).length;
-  const searchCount = config.searchFieldIds.filter((id) => searchableIds.has(id)).length;
 
   const setFilter = (fieldId: string) =>
     onChange({ ...config, filterFieldIds: toggleId(config.filterFieldIds, fieldId) });
-  const setSearch = (fieldId: string) =>
-    onChange({ ...config, searchFieldIds: toggleId(config.searchFieldIds, fieldId) });
 
   return (
     <section className="cfg-card">
       <div className="cfg-card-head">
         <h2>4. 筛选与搜索</h2>
-        <span className="cfg-hint">
-          筛选 {filterCount} 个 · 搜索 {searchCount} 个
-        </span>
+        <span className="cfg-hint">筛选 {filterCount} 个</span>
       </div>
       <p className="cfg-hint">
-        勾选的字段会出现在浏览页顶部的筛选区。搜索框只支持文本类字段（文本、电话、邮箱、链接），多个搜索字段之间是「或」的关系。关联字段可作为筛选条件，按关联记录筛选。已在字段列表中关闭「显示」的字段不会出现在这里。
+        勾选的字段会出现在浏览页顶部的筛选区，关联字段按关联记录筛选。关键词搜索会检索下方「搜索范围」里所有字段中包含输入内容的记录；已在字段列表中关闭「显示」的字段不参与搜索。
       </p>
 
       <div className="pick-block">
@@ -81,25 +75,16 @@ export function SettingsSection({ config, fields, onChange }: Props) {
 
       <div className="pick-block">
         <div className="pick-title">
-          搜索字段
+          搜索范围
           <Tag size="small" color="grey">
-            文本类
+            自动
           </Tag>
         </div>
         {searchable.length === 0 ? (
-          <div className="cfg-empty">当前数据表没有文本类字段，无法提供关键词搜索</div>
+          <div className="cfg-empty">当前数据表没有可用于关键词搜索的字段</div>
         ) : (
-          <div className="pick-list">
-            {searchable.map((f) => (
-              <div className={`pick-item${config.searchFieldIds.includes(f.id) ? ' active' : ''}`} key={f.id}>
-                <Checkbox
-                  checked={config.searchFieldIds.includes(f.id)}
-                  onChange={() => setSearch(f.id)}
-                >
-                  <span className="pick-name">{f.name}</span>
-                </Checkbox>
-              </div>
-            ))}
+          <div className="cfg-hint">
+            按「包含相关字」检索以下字段：{searchable.map((f) => f.name).join('、')}
           </div>
         )}
       </div>

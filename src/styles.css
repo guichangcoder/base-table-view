@@ -894,6 +894,24 @@ p.cfg-hint {
   flex-shrink: 0;
 }
 
+/* 排序行：字段下拉自适应宽度，方向按钮固定 */
+.wb-toolbar-sort {
+  padding-top: 0;
+  border-bottom: 1px solid var(--c-border-weak);
+}
+
+.wb-toolbar-sort .semi-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.wb-sort-label {
+  flex-shrink: 0;
+  line-height: 28px;
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
 .wb-filters {
   display: flex;
   flex-direction: column;

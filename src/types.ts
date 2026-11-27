@@ -219,6 +219,11 @@ export interface TableMetaLite {
 export interface RecordRow {
   recordId: string;
   fields: Record<string, unknown>;
+  /**
+   * 只读展示侧信道：仅存放「宿主按展示文本返回」的字段值（当前为人员类字段的姓名）。
+   * 不覆盖 fields，写入/编辑仍以 fields 里的原始值为准。展示时用 displayCell() 取值。
+   */
+  display?: Record<string, unknown>;
 }
 
 export interface LoadedRecordPage {

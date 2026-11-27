@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { Empty, Spin } from '@douyinfe/semi-ui';
 import type { DocSubConfig, FieldMetaLite, PluginData, RecordRow } from '../../types';
 import { isButtonField, visibleFieldIds } from '../../utils/configOps';
-import { formatCellValue } from '../../utils/valueConverter';
+import { displayCell, formatCellValue } from '../../utils/valueConverter';
 import { hexToRgba, toneOf } from '../../utils/palette';
 import { fieldLabel } from '../../utils/validator';
 import { loadViewMeta } from '../../services/baseService';
@@ -39,6 +39,7 @@ function SubTableBlock({ sub, recordId }: { sub: DocSubConfig; recordId: string 
           pageSize: 200,
           filterItems: [{ fieldId: sub.linkFieldId, operator: 'contains', value: recordId }],
           fields: meta.fields,
+          withDisplay: true,
         });
         if (!alive) return;
         setCols(usable);
@@ -86,7 +87,7 @@ function SubTableBlock({ sub, recordId }: { sub: DocSubConfig; recordId: string 
                 <tr key={row.recordId}>
                   <td className="sub-col-index">{i + 1}</td>
                   {cols.map((c) => {
-                    const text = formatCellValue(row.fields[c.id], c);
+                    const text = formatCellValue(displayCell(row, c.id), c);
                     return (
                       <td key={c.id} title={text}>
                         {text || '—'}
@@ -176,7 +177,7 @@ export function RecordDetail({ config, fields, record }: Props) {
                 const field = fieldMap.get(id);
                 if (!field) return null;
                 const cfg = cfgMap.get(id);
-                const text = formatCellValue(record.fields[id], field);
+                const text = formatCellValue(displayCell(record, id), field);
                 const highlight = cfg?.emphasis?.highlight;
                 const hlColor = cfg?.emphasis?.color ?? group.color;
                 return (

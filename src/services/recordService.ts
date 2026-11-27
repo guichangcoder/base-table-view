@@ -4,7 +4,7 @@
  */
 import { FieldType } from '@lark-base-open/js-sdk';
 import { getBridge } from './appContext';
-import { getTableCached, isLinkType, isTextType, listFieldsCached } from './baseService';
+import { getTableCached, isLinkType, isTextType, isUserType, listFieldsCached } from './baseService';
 import { formatCellValue } from '../utils/valueConverter';
 import type { FieldMetaLite, FilterItem, LoadedRecordPage, RecordRow } from '../types';
 
@@ -99,6 +99,31 @@ function buildCondition(item: FilterItem, field?: FieldMetaLite): any | null {
   return { ...base, operator: 'contains', value: item.value };
 }
 
+/**
+ * 关键词搜索条件：文本类走文本 contains；
+ * 单选/多选把「选项名包含关键词」的选项 id 交给宿主做 contains。
+ * 该字段没有选项命中时返回 null（本次检索跳过此字段，避免把非法值传给宿主）。
+ */
+function buildSearchCondition(field: FieldMetaLite, keyword: string): any | null {
+  if (isTextType(field.type)) {
+    return buildCondition({ fieldId: field.id, operator: 'contains', value: keyword }, field);
+  }
+  if (field.type === FT.SingleSelect || field.type === FT.MultiSelect) {
+    const kw = keyword.toLowerCase();
+    const ids = (field.options ?? [])
+      .filter((o) => String(o.name ?? '').toLowerCase().includes(kw))
+      .map((o) => o.id);
+    if (!ids.length) return null;
+    return {
+      fieldId: field.id,
+      fieldType: field.type,
+      operator: 'contains',
+      value: field.type === FT.MultiSelect ? ids : ids.length === 1 ? ids[0] : ids,
+    };
+  }
+  return null;
+}
+
 /** 组合筛选：显式条件 AND，关键词在指定字段间 OR */
 export function buildServerFilter(
   items: FilterItem[],
@@ -118,7 +143,7 @@ export function buildServerFilter(
     ? (searchFieldIds ?? [])
         .map((id) => byId.get(id))
         .filter((f): f is FieldMetaLite => !!f)
-        .map((f) => buildCondition({ fieldId: f.id, operator: 'contains', value: kw }, f))
+        .map((f) => buildSearchCondition(f, kw))
         .filter(Boolean)
     : [];
 
@@ -141,6 +166,44 @@ export interface ListRecordsOptions {
   keyword?: string;
   searchFieldIds?: string[];
   fields?: FieldMetaLite[];
+  /** 服务端排序（按字段升/降序），空数组表示用视图默认顺序 */
+  sort?: Array<{ fieldId: string; desc: boolean }>;
+  /**
+   * 是否附带「展示文本」侧信道。人员类字段（人员/创建人/修改人）原始值可能只有用户 id，
+   * 打开后会用一次 stringValue 查询把姓名挂到 RecordRow.display（不覆盖原始 fields）。
+   */
+  withDisplay?: boolean;
+}
+
+/** 字段列表里的人员类字段 id（用于按展示文本补姓名） */
+export function userFieldIdsOf(fields?: Array<{ id: string; type: number }>): string[] {
+  return (fields ?? []).filter((f) => isUserType(f.type)).map((f) => f.id);
+}
+
+/** 用 getCellString 给记录补人员字段的展示文本（姓名），单字段失败忽略；返回原数组 */
+async function attachDisplay(
+  table: any,
+  rows: RecordRow[],
+  userFieldIds: string[],
+): Promise<RecordRow[]> {
+  if (!userFieldIds.length || typeof table.getCellString !== 'function') return rows;
+  await Promise.all(
+    rows.map(async (row) => {
+      const display: Record<string, unknown> = {};
+      await Promise.all(
+        userFieldIds.map(async (id) => {
+          try {
+            const text = await table.getCellString(id, row.recordId);
+            if (text) display[id] = text;
+          } catch {
+            /* 单字段取文本失败时忽略，回落原始值 */
+          }
+        }),
+      );
+      if (Object.keys(display).length) row.display = display;
+    }),
+  );
+  return rows;
 }
 
 /** 分页读取记录（万级数据只取当前页） */
@@ -161,12 +224,36 @@ export async function listRecords(
     options.searchFieldIds,
   );
   if (filter) params.filter = filter;
+  if (options.sort?.length) params.sort = options.sort;
 
   const res: any = await table.getRecordsByPage(params);
   const records: RecordRow[] = (res?.records ?? []).map((r: any) => ({
     recordId: String(r.recordId),
     fields: r.fields ?? {},
   }));
+
+  // 人员类字段补展示文本（姓名）：并发一次 stringValue 查询，只挂到 display，原始 fields 不变
+  const userFieldIds = options.withDisplay ? userFieldIdsOf(options.fields) : [];
+  if (userFieldIds.length) {
+    try {
+      const dispRes: any = await table.getRecordsByPage({ ...params, stringValue: true });
+      const dispMap = new Map<string, Record<string, unknown>>();
+      (dispRes?.records ?? []).forEach((r: any) => {
+        const display: Record<string, unknown> = {};
+        userFieldIds.forEach((id) => {
+          const v = r?.fields?.[id];
+          if (v !== undefined && v !== null && v !== '') display[id] = v;
+        });
+        if (Object.keys(display).length) dispMap.set(String(r.recordId), display);
+      });
+      records.forEach((row) => {
+        const display = dispMap.get(row.recordId);
+        if (display) row.display = display;
+      });
+    } catch (e) {
+      console.warn('[recordService] 人员展示文本读取失败，回落为原始值:', e);
+    }
+  }
 
   return {
     records,
@@ -176,21 +263,33 @@ export async function listRecords(
   };
 }
 
-export async function getRecordById(tableId: string, recordId: string): Promise<RecordRow> {
+/** 单条记录：可附带人员类字段的展示文本（姓名），避免详情/回读时显示成用户 id */
+export async function getRecordById(
+  tableId: string,
+  recordId: string,
+  userFieldIds: string[] = [],
+): Promise<RecordRow> {
   const table = await getTable(tableId);
   const res: any = await table.getRecordById(recordId);
-  return { recordId, fields: res?.fields ?? {} };
+  const row: RecordRow = { recordId, fields: res?.fields ?? {} };
+  const [withDisplay] = await attachDisplay(table, [row], userFieldIds);
+  return withDisplay;
 }
 
 /** 批量读取（≤1000）。返回顺序与入参对齐；长度不一致时退化为逐条读取 */
-export async function getRecordsByIds(tableId: string, recordIds: string[]): Promise<RecordRow[]> {
+export async function getRecordsByIds(
+  tableId: string,
+  recordIds: string[],
+  userFieldIds: string[] = [],
+): Promise<RecordRow[]> {
   if (!recordIds.length) return [];
   const table = await getTable(tableId);
   const ids = recordIds.slice(0, 1000);
   try {
     const list: any[] = await table.getRecordsByIds(ids, true);
     if (Array.isArray(list) && list.length === ids.length) {
-      return list.map((r, i) => ({ recordId: ids[i], fields: r?.fields ?? {} }));
+      const rows: RecordRow[] = list.map((r, i) => ({ recordId: ids[i], fields: r?.fields ?? {} }));
+      return attachDisplay(table, rows, userFieldIds);
     }
   } catch (e) {
     console.warn('[recordService] getRecordsByIds 失败，退化为逐条读取:', e);
@@ -202,7 +301,9 @@ export async function getRecordsByIds(tableId: string, recordIds: string[]): Pro
     const batch = ids.slice(i, i + CONCURRENCY);
     const rows = await Promise.all(
       batch.map((id) =>
-        getRecordById(tableId, id).catch(() => ({ recordId: id, fields: {} }) as RecordRow),
+        getRecordById(tableId, id, userFieldIds).catch(
+          () => ({ recordId: id, fields: {} }) as RecordRow,
+        ),
       ),
     );
     out.push(...rows);

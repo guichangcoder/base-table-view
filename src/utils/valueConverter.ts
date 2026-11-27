@@ -166,8 +166,19 @@ export function formatCellValue(value: unknown, field?: FieldMetaLite): string {
   }
 }
 
-/** 是否为空值（必填校验用） */
-export function isEmptyValue(value: unknown): boolean {
+/**
+ * 展示取值：优先取宿主返回的展示文本（人员姓名等），没有时回落到原始单元格值。
+ * 仅用于只读展示；写入/编辑仍以 row.fields 里的原始值为准。
+ */
+export function displayCell(
+  row: { fields: Record<string, unknown>; display?: Record<string, unknown> },
+  fieldId: string,
+): unknown {
+  const d = row.display?.[fieldId];
+  if (d === undefined || d === null || d === '') return row.fields[fieldId];
+  return d;
+}
+/** 是否为空值（必填校验用） */export function isEmptyValue(value: unknown): boolean {
   if (value === null || value === undefined) return true;
   if (typeof value === 'string') return value.trim() === '';
   if (typeof value === 'number') return Number.isNaN(value);

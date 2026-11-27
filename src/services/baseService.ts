@@ -100,8 +100,25 @@ export function isLinkType(type: number): boolean {
 export function isRefType(type: number): boolean {
   return isLinkType(type) || type === FT.User;
 }
+/**
+ * 人员类字段：人员、创建人、修改人。
+ * 这几种字段原始单元格值里可能只有用户 id（没有姓名），
+ * 展示姓名需要宿主按 stringValue / getCellString 返回的展示文本。
+ */
+export function isUserType(type: number): boolean {
+  return type === FT.User || type === FT.CreatedUser || type === FT.ModifiedUser;
+}
 export function isTextType(type: number): boolean {
   return TEXT_TYPES.includes(type);
+}
+/**
+ * 关键词搜索可用的字段类型：
+ * - 文本类（文本/电话/邮箱/链接）：宿主按文本 contains 检索；
+ * - 单选/多选：按「选项名包含关键词」命中（选项 id 由字段元信息提供）。
+ * 数字/日期/人员/关联等类型无法按「包含相关字」检索。
+ */
+export function isSearchableType(type: number): boolean {
+  return isTextType(type) || type === FT.SingleSelect || type === FT.MultiSelect;
 }
 
 export async function listTables(): Promise<TableMetaLite[]> {

@@ -11,6 +11,7 @@ import {
 import { listUserCandidates, type UserCandidate } from '../../services/recordService';
 import {
   buildFieldValue,
+  displayCell,
   formatCellValue,
   toFormValue,
   type FormValue,
@@ -277,7 +278,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
     }
 
     if (!canEdit(field)) {
-      const text = formatCellValue(record?.fields?.[field.id], field);
+      const text = formatCellValue(record ? displayCell(record, field.id) : undefined, field);
       return (
         <div className="form-readonly">
           {text || '—'}
@@ -297,7 +298,7 @@ export function RecordForm({ open, mode, config, fields, record, saving, onCance
         userOptions={users[field.id]}
         linkTableId={linkTableIdOf(field)}
         label={fieldLabel(field, cfg)}
-        fallbackText={formatCellValue(record?.fields?.[field.id], field)}
+        fallbackText={formatCellValue(record ? displayCell(record, field.id) : undefined, field)}
       />
     );
   };

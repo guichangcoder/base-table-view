@@ -404,8 +404,33 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
     row.auto[field.id] !== undefined ? toFormValue(row.auto[field.id], field) : row.values[field.id];
 
   /** 引用类来源（关联、人员）、目标非引用类时取展示文本（关联值是 { text, recordIds }，人员值是人员对象数组） */
-  const sourceValueFor = (raw: unknown, from: FieldMetaLite, to: FieldMetaLite): unknown =>
-    isRefType(from.type) && !isRefType(to.type) ? formatCellValue(raw, from) : raw;
+  const sourceValueFor = (
+    raw: unknown,
+    display: unknown,
+    from: FieldMetaLite,
+    to: FieldMetaLite,
+  ): unknown => {
+    if (!(isRefType(from.type) && !isRefType(to.type))) return raw;
+    // 优先用宿主返回的展示文本（人员姓名等），取不到再按原始值渲染
+    if (display !== undefined && display !== null && display !== '') return String(display);
+    return formatCellValue(raw, from);
+  };
+
+  /** 主表人员字段值（id / id 数组 / 人员对象）→ 姓名文本；取不到姓名时回落 id */
+  const userTextOf = (raw: unknown, field: FieldMetaLite): string =>
+    splitCellValues(raw)
+      .map((x) => {
+        const id = String(
+          x && typeof x === 'object'
+            ? ((x as any).id ?? (x as any).name ?? '')
+            : (x ?? ''),
+        );
+        if (!id) return '';
+        const hit = userOptionsOf(config.tableId, field).find((u) => u.id === id);
+        return hit?.name ?? (x as any)?.name ?? id;
+      })
+      .filter(Boolean)
+      .join('、');
 
   /** 子表字段有效值：有映射且来源有值 → 自动带出（只读）；否则取用户输入 */
   const subValueOf = (
@@ -417,7 +442,14 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
     if (!resolved) return { value: sub.values[field.id], auto: false };
     if (resolved.src === 'hop1' || resolved.src === 'hop2') {
       const rawRow = resolved.src === 'hop1' ? row.sourceData?.hop1 : row.sourceData?.hop2;
-      const raw = sourceValueFor(rawRow?.[resolved.from.id], resolved.from, field);
+      const dispRow =
+        resolved.src === 'hop1' ? row.sourceData?.hop1Display : row.sourceData?.hop2Display;
+      const raw = sourceValueFor(
+        rawRow?.[resolved.from.id],
+        dispRow?.[resolved.from.id],
+        resolved.from,
+        field,
+      );
       if (!isEmptyValue(raw)) return { value: toFormValue(raw, field), auto: true };
       return { value: sub.values[field.id], auto: false };
     }
@@ -427,7 +459,10 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
         row.auto[resolved.from.id] !== undefined
           ? row.auto[resolved.from.id]
           : row.values[resolved.from.id];
-      const text = formatCellValue(rawMain, resolved.from);
+      const text =
+        resolved.from.type === FT.User
+          ? userTextOf(rawMain, resolved.from)
+          : formatCellValue(rawMain, resolved.from);
       if (text) return { value: toFormValue(text, field), auto: true };
       return { value: sub.values[field.id], auto: false };
     }

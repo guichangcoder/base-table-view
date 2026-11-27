@@ -12,7 +12,7 @@ import type {
   FieldMetaLite,
 } from '../types';
 import { getTableName, isEditableType, isLinkType, isRefType, listFieldsCached } from './baseService';
-import { extractLinkIds, getRecordById, getRecordsByIds } from './recordService';
+import { extractLinkIds, getRecordById, getRecordsByIds, userFieldIdsOf } from './recordService';
 import { formatCellValue, isEmptyValue } from '../utils/valueConverter';
 
 function errMsg(e: unknown): string {
@@ -201,6 +201,9 @@ export function resolveMapping(
 export interface DocSourceData {
   hop1?: Record<string, unknown>;
   hop2?: Record<string, unknown>;
+  /** 人员类字段的展示文本（姓名），用于带出到普通字段时写入姓名而非用户 id */
+  hop1Display?: Record<string, unknown>;
+  hop2Display?: Record<string, unknown>;
   /** 是否取到合同关联的客户记录 */
   hasHop2: boolean;
 }
@@ -213,22 +216,27 @@ export async function fetchDocFillData(
   meta: DocMeta,
   contractRecordId: string,
 ): Promise<DocSourceData> {
-  const contract = await getRecordById(meta.contractTableId, contractRecordId);
+  const contract = await getRecordById(
+    meta.contractTableId,
+    contractRecordId,
+    userFieldIdsOf(meta.contractFields),
+  );
   const hop1 = contract.fields;
+  const hop1Display = contract.display;
 
   const customerIds =
     meta.customerFieldId && meta.customerTableId
       ? extractLinkIds(contract.fields[meta.customerFieldId])
       : [];
-  if (!customerIds.length) return { hop1, hasHop2: false };
+  if (!customerIds.length) return { hop1, hop1Display, hasHop2: false };
 
   try {
-    const rows = await getRecordsByIds(meta.customerTableId, [customerIds[0]]);
+    const rows = await getRecordsByIds(meta.customerTableId, [customerIds[0]], userFieldIdsOf(meta.customerFields));
     const customer = rows[0];
-    if (!customer) return { hop1, hasHop2: false };
-    return { hop1, hop2: customer.fields, hasHop2: true };
+    if (!customer) return { hop1, hop1Display, hasHop2: false };
+    return { hop1, hop1Display, hop2: customer.fields, hop2Display: customer.display, hasHop2: true };
   } catch {
-    return { hop1, hasHop2: false };
+    return { hop1, hop1Display, hasHop2: false };
   }
 }
 
@@ -244,8 +252,14 @@ export function collectAuto(
     const raw = row[p.from.id];
     if (isEmptyValue(raw)) return;
     // 引用类来源（关联、人员）带出到普通目标时取其展示文本，否则会写入记录 id / 用户 id
-    out[p.to.id] =
-      isRefType(p.from.type) && !isRefType(p.to.type) ? formatCellValue(raw, p.from) : raw;
+    if (isRefType(p.from.type) && !isRefType(p.to.type)) {
+      const dispMap = p.src === 'hop1' ? data.hop1Display : p.src === 'hop2' ? data.hop2Display : undefined;
+      const disp = dispMap?.[p.from.id];
+      out[p.to.id] =
+        disp !== undefined && disp !== null && disp !== '' ? String(disp) : formatCellValue(raw, p.from);
+      return;
+    }
+    out[p.to.id] = raw;
   });
   return out;
 }

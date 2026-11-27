@@ -327,7 +327,8 @@ export function ButtonActionDialog({ visible, field, value, fields, onCancel, on
           <div className="btn-action-tip">
             值同样支持 {RECORD_ID_TOKEN}、{'{{字段名}}'} 等占位符。
             Content-Type 已按请求体格式自动设置，无需手填。自定义请求头会触发跨域预检，
-            目标服务必须允许跨域，否则浏览器会拦截该请求。
+            目标服务必须允许跨域，否则浏览器会拦截该请求；未配置自定义请求头时插件会自动
+            降级发送（目标未开启跨域时请求体按 text/plain 投递），保证一次点击只发送一条请求。
           </div>
         </div>
 

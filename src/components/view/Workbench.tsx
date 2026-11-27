@@ -3,8 +3,8 @@ import { Banner, Button, DatePicker, Empty, Input, Select, Spin, Toast } from '@
 import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, FilterItem, PluginData, RecordRow } from '../../types';
 import { visibleFieldIds } from '../../utils/configOps';
-import { formatCellValue } from '../../utils/valueConverter';
-import { isLinkType, isTextType, loadViewMeta, listSelectOptions, type SelectOptionLite } from '../../services/baseService';
+import { displayCell, formatCellValue } from '../../utils/valueConverter';
+import { isLinkType, isSearchableType, isUserType, loadViewMeta, listSelectOptions, type SelectOptionLite } from '../../services/baseService';
 import { docReady } from '../../services/docService';
 import { clearDraft, loadDraft } from '../../services/draftService';
 import {
@@ -123,6 +123,10 @@ export function Workbench({ config }: Props) {
   const [selectOptions, setSelectOptions] = useState<Record<string, SelectOptionLite[]>>({});
   /** 关联字段筛选项：关联表的候选记录（按记录 id 过滤） */
   const [linkOptions, setLinkOptions] = useState<Record<string, LinkCandidate[]>>({});
+  /** 排序字段 id：''=不排序；null=尚未初始化（首次自动选中创建时间） */
+  const [sortFieldId, setSortFieldId] = useState<string | null>(null);
+  /** true=降序（最新/最大在前） */
+  const [sortDesc, setSortDesc] = useState(true);
 
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<{ mode: 'create' | 'edit' } | null>(null);
@@ -141,7 +145,8 @@ export function Workbench({ config }: Props) {
   const searchHintRef = useRef(false);
 
   const fieldMap = useMemo(() => new Map(fields.map((f) => [f.id, f])), [fields]);
-
+  /** 人员类字段 id：列表/详情展示时按宿主返回的展示文本（姓名）取值 */
+  const userFieldIds = useMemo(() => fields.filter((f) => isUserType(f.type)).map((f) => f.id), [fields]);
   // 配置关闭「显示」的字段前端不可阅读：筛选/搜索控件（下拉会列出选项值）也不再出现
   const hiddenFieldIds = useMemo(
     () => new Set(config.fields.filter((c) => c.visible === false).map((c) => c.fieldId)),
@@ -153,11 +158,39 @@ export function Workbench({ config }: Props) {
       ? config.filterFieldIds
       : fields.filter((f) => !f.unsupported && !f.isButton && FILTERABLE_TYPES.includes(f.type)).map((f) => f.id)
   ).filter((id) => !hiddenFieldIds.has(id));
-  const effectiveSearchIds = (
-    config.searchFieldIds.length
-      ? config.searchFieldIds
-      : fields.filter((f) => !f.unsupported && !f.isButton && isTextType(f.type)).map((f) => f.id)
-  ).filter((id) => !hiddenFieldIds.has(id));
+  // 关键词搜索范围：所有「可见 + 可搜索」字段（文本类 + 单选/多选），
+  // 不限定在配置面板勾选的前几个字段，否则关键词出现在其它字段时会搜不到记录
+  const searchableFields = useMemo(
+    () =>
+      fields.filter(
+        (f) => !f.unsupported && !f.isButton && !hiddenFieldIds.has(f.id) && isSearchableType(f.type),
+      ),
+    [fields, hiddenFieldIds],
+  );
+  const effectiveSearchIds = useMemo(() => searchableFields.map((f) => f.id), [searchableFields]);
+
+  // 可排序字段：排除关联/附件/按钮等宿主不支持排序的类型
+  const sortableFields = useMemo(
+    () =>
+      fields.filter(
+        (f) =>
+          !f.unsupported &&
+          !f.isButton &&
+          !isLinkType(f.type) &&
+          f.type !== FT.Attachment &&
+          !hiddenFieldIds.has(f.id),
+      ),
+    [fields, hiddenFieldIds],
+  );
+  /** 默认按创建时间倒序：最新创建的记录在最顶部（未手动选择排序时生效） */
+  const createdFieldId = useMemo(
+    () => fields.find((f) => f.type === FT.CreatedTime)?.id ?? '',
+    [fields],
+  );
+  const activeSortFieldId = sortFieldId ?? createdFieldId;
+  /** 传给宿主的排序条件：空表示不排序，用视图默认顺序 */
+  const sortItems = activeSortFieldId ? [{ fieldId: activeSortFieldId, desc: sortDesc }] : [];
+  const sortKey = activeSortFieldId ? `${activeSortFieldId}:${sortDesc}` : '';
 
   // 1) 元信息
   useEffect(() => {
@@ -288,6 +321,8 @@ export function Workbench({ config }: Props) {
         keyword: applied.keyword,
         searchFieldIds: effectiveSearchIds,
         fields,
+        sort: sortItems,
+        withDisplay: true,
       });
       // 期间筛选/搜索又变了，当前响应已过期，直接丢弃
       if (seq !== seqRef.current) return;
@@ -322,12 +357,12 @@ export function Workbench({ config }: Props) {
     }
   };
 
-  // 6) 条件变化 → 重新取第一页
+  // 6) 条件变化（筛选/搜索/排序）→ 重新取第一页
   useEffect(() => {
     if (!config.tableId || fields.length === 0) return;
     void fetchPage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.tableId, fields, applied]);
+  }, [config.tableId, fields, applied, sortKey]);
 
   // 7) 刷新后恢复上次保存的草稿：编辑态重新选中该记录，新建态直接打开新增表单
   useEffect(() => {
@@ -358,7 +393,7 @@ export function Workbench({ config }: Props) {
       return;
     }
     // 记录不在当前列表（被筛选掉或未加载到）时单独取一次
-    getRecordById(tableId, recordId)
+    getRecordById(tableId, recordId, userFieldIds)
       .then((row) => {
         idsRef.current.add(recordId);
         setRecords((prev) =>
@@ -377,7 +412,7 @@ export function Workbench({ config }: Props) {
 
   const titleOf = (row: RecordRow): string => {
     const field = primaryId ? fieldMap.get(primaryId) : undefined;
-    const text = formatCellValue(row.fields[primaryId], field);
+    const text = formatCellValue(displayCell(row, primaryId), field);
     return text || '未命名记录';
   };
 
@@ -389,7 +424,7 @@ export function Workbench({ config }: Props) {
     return ids
       .map((id) => {
         const f = fieldMap.get(id);
-        return f ? formatCellValue(row.fields[id], f) : '';
+        return f ? formatCellValue(displayCell(row, id), f) : '';
       })
       .filter(Boolean)
       .join(' · ');
@@ -398,7 +433,7 @@ export function Workbench({ config }: Props) {
   const refreshRecord = async (recordId: string) => {
     if (!config.tableId) return;
     try {
-      const row = await getRecordById(config.tableId, recordId);
+      const row = await getRecordById(config.tableId, recordId, userFieldIds);
       // 新增的记录同步进去重集合，避免后续「加载更多」把它重复追加一次
       idsRef.current.add(recordId);
       setRecords((prev) =>
@@ -474,7 +509,7 @@ export function Workbench({ config }: Props) {
       searchHintRef.current = true;
       Toast.warning(
         fields.length
-          ? '当前数据表没有文本类字段，无法关键词搜索'
+          ? '当前数据表没有可用于关键词搜索的字段（文本、电话、邮箱、链接、单选、多选）'
           : '搜索字段尚未加载完成，请点「刷新」后重试',
       );
     }
@@ -620,7 +655,7 @@ export function Workbench({ config }: Props) {
 
         <div className="wb-toolbar">
           <Input
-            placeholder={effectiveSearchIds.length ? '搜索关键词' : '当前数据表没有可搜索的文本字段'}
+            placeholder={effectiveSearchIds.length ? '搜索关键词' : '当前数据表没有可搜索的字段'}
             value={keyword}
             showClear
             onChange={onKeywordChange}
@@ -631,6 +666,30 @@ export function Workbench({ config }: Props) {
             onClick={toggleFilters}
           >
             筛选{activeFilters.length ? ` ${activeFilters.length}` : ''}
+          </Button>
+        </div>
+
+        <div className="wb-toolbar wb-toolbar-sort">
+          <span className="wb-sort-label">排序</span>
+          <Select
+            size="small"
+            value={activeSortFieldId}
+            showClear={false}
+            filter
+            placeholder="选择排序字段"
+            onChange={(v) => setSortFieldId(String(v ?? ''))}
+            optionList={[
+              { label: '不排序（视图默认）', value: '' },
+              ...sortableFields.map((f) => ({ label: f.name, value: f.id })),
+            ]}
+          />
+          <Button
+            size="small"
+            disabled={!activeSortFieldId}
+            title={sortDesc ? '当前：降序（新→旧 / 大→小）' : '当前：升序（旧→新 / 小→大）'}
+            onClick={() => setSortDesc((v) => !v)}
+          >
+            {sortDesc ? '↓ 降序' : '↑ 升序'}
           </Button>
         </div>
 
