@@ -65,11 +65,21 @@ function sourceCandidates(list: FieldMetaLite[], excludeId?: string): FieldMetaL
   );
 }
 
-/** 可写入的带出目标字段：仅可编辑、非关联 */
-function targetCandidates(list: FieldMetaLite[], excludeId?: string): FieldMetaLite[] {
+/**
+ * 可写入的带出目标字段：仅可编辑。
+ * includeLink 为 true 时允许关联字段作为目标（如「合同·关联客户」→「主表·关联客户」，写入关联记录）。
+ */
+function targetCandidates(
+  list: FieldMetaLite[],
+  excludeId?: string,
+  includeLink = false,
+): FieldMetaLite[] {
   return list.filter(
     (f) =>
-      f.id !== excludeId && !f.unsupported && isEditableType(f.type) && !isLinkType(f.type),
+      f.id !== excludeId &&
+      !f.unsupported &&
+      isEditableType(f.type) &&
+      (includeLink || !isLinkType(f.type)),
   );
 }
 
@@ -175,8 +185,8 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
   const addSub = () => patchSubs([...subs, { tableId: '', linkFieldId: '' }]);
   const removeSub = (index: number) => patchSubs(subs.filter((_, i) => i !== index));
 
-  /** 可被带出的主表目标字段：去掉合同关联字段本身与其它关联字段 */
-  const mainTargets = targetCandidates(fields, doc.contractFieldId);
+  /** 可被带出的主表目标字段：去掉合同关联字段本身；关联字段也可作为目标（带出合同上的关联记录） */
+  const mainTargets = targetCandidates(fields, doc.contractFieldId, true);
   const mainSources = sourceCandidates(fields, doc.contractFieldId);
   const hop1Sources = sourceCandidates(contractFields);
   const hop2Sources = sourceCandidates(customerFields);
@@ -195,11 +205,18 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
     onMapping: (next: DocMapping) => void,
   ) =>
     targets.map((target) => {
-      const defaultFields = groups.find((g) => g.src === defaultSrc)?.fields ?? [];
+      // 关联目标只能由关联来源写入（写入的是关联记录），非关联来源不列出，避免配了不生效
+      const linkTarget = isLinkType(target.type);
+      const pickSources = (list: FieldMetaLite[]) =>
+        linkTarget ? list.filter((f) => isLinkType(f.type)) : list;
+      const defaultFields = pickSources(groups.find((g) => g.src === defaultSrc)?.fields ?? []);
       const sameName = defaultFields.find((f) => f.name === target.name);
       return (
         <div className="doc-map-row" key={target.id}>
-          <span className="doc-map-target">{target.name}</span>
+          <span className="doc-map-target" title={linkTarget ? `${target.name}（关联字段）` : target.name}>
+            {target.name}
+            {linkTarget ? '（关联）' : ''}
+          </span>
           <Select
             size="small"
             filter
@@ -212,7 +229,7 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
               },
               { label: '不带出', value: NONE },
               ...groups.flatMap((g) =>
-                g.fields.map((f) => ({
+                pickSources(g.fields).map((f) => ({
                   label: `${g.label}：${f.name}${isReadonlyType(f.type) ? '（只读）' : ''}`,
                   value: `${g.src}|${f.id}`,
                 })),
@@ -300,7 +317,8 @@ export function DocSection({ config, fields, tables, onChange }: Props) {
               <h3>合同 / 客户 → 主表 带出字段</h3>
               <span className="cfg-hint">
                 默认按合同字段同名自动带出，可逐项改为指定来源或不带出；
-                已指定来源但未加入展示分组的字段，也会出现在单据表单中按来源带出（只读）
+                已指定来源但未加入展示分组的字段，也会出现在单据表单中按来源带出（只读）。
+                目标为关联字段时（如「主表·关联客户」），来源须同样为关联字段（如「合同·关联客户」），保存时写入其关联记录
               </span>
             </div>
             {!contractTableId ? (

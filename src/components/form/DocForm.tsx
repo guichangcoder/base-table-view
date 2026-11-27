@@ -198,6 +198,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
   /**
    * 主表可填字段：展示分组内可见字段 + 显式配置了来源映射的额外字段。
    * 后者即使没有加入展示分组，也要出现在单据表单里按来源带出（只读）。
+   * 关联字段同样参与：可由合同/客户的关联字段带出关联记录并写入主表。
    */
   const mainDisplay = useMemo(() => {
     const ids: string[] = [];
@@ -220,10 +221,7 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
     return ids
       .filter((id) => id !== doc?.contractFieldId)
       .map((id) => fieldMap.get(id))
-      .filter(
-        (f): f is FieldMetaLite =>
-          !!f && !f.unsupported && isEditableType(f.type) && !isLinkType(f.type),
-      );
+      .filter((f): f is FieldMetaLite => !!f && !f.unsupported && isEditableType(f.type));
   }, [config, cfgMap, fieldMap, doc?.contractFieldId, doc?.main]);
 
   /** 每张子表的可填字段 */
