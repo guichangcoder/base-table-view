@@ -11,7 +11,7 @@ import type {
   DocSubConfig,
   FieldMetaLite,
 } from '../types';
-import { getTableName, isEditableType, isLinkType, listFieldsCached } from './baseService';
+import { getTableName, isEditableType, isLinkType, isRefType, listFieldsCached } from './baseService';
 import { extractLinkIds, getRecordById, getRecordsByIds } from './recordService';
 import { formatCellValue, isEmptyValue } from '../utils/valueConverter';
 
@@ -243,9 +243,9 @@ export function collectAuto(
     if (!row) return;
     const raw = row[p.from.id];
     if (isEmptyValue(raw)) return;
-    // 关联来源带出到非关联目标时取其展示文本（关联单元格值是 { text, recordIds }）
+    // 引用类来源（关联、人员）带出到普通目标时取其展示文本，否则会写入记录 id / 用户 id
     out[p.to.id] =
-      isLinkType(p.from.type) && !isLinkType(p.to.type) ? formatCellValue(raw, p.from) : raw;
+      isRefType(p.from.type) && !isRefType(p.to.type) ? formatCellValue(raw, p.from) : raw;
   });
   return out;
 }

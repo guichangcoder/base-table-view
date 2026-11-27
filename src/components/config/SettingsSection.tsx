@@ -6,7 +6,7 @@ import { isTextType } from '../../services/baseService';
 
 const FT = FieldType as any;
 
-/** 可用于筛选的字段类型（与 recordService.buildCondition 支持的类型保持一致） */
+/** 可用于筛选的字段类型（与 Workbench、recordService.buildCondition 支持的类型保持一致） */
 const FILTERABLE_TYPES = [
   FT.Text,
   FT.Number,
@@ -18,6 +18,8 @@ const FILTERABLE_TYPES = [
   FT.Email,
   FT.Url,
   FT.Checkbox,
+  FT.SingleLink,
+  FT.DuplexLink,
 ].filter((v) => typeof v === 'number');
 
 interface Props {
@@ -54,7 +56,7 @@ export function SettingsSection({ config, fields, onChange }: Props) {
         </span>
       </div>
       <p className="cfg-hint">
-        勾选的字段会出现在浏览页顶部的筛选区。搜索框只支持文本类字段（文本、电话、邮箱、链接），多个搜索字段之间是「或」的关系。已在字段列表中关闭「显示」的字段不会出现在这里。
+        勾选的字段会出现在浏览页顶部的筛选区。搜索框只支持文本类字段（文本、电话、邮箱、链接），多个搜索字段之间是「或」的关系。关联字段可作为筛选条件，按关联记录筛选。已在字段列表中关闭「显示」的字段不会出现在这里。
       </p>
 
       <div className="pick-block">

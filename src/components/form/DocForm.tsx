@@ -16,6 +16,7 @@ import {
   isEditableType,
   isLinkType,
   isReadonlyType,
+  isRefType,
   listSelectOptions,
   type SelectOptionLite,
 } from '../../services/baseService';
@@ -402,9 +403,9 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
   const mainValueOf = (row: MainRowState, field: FieldMetaLite): FormValue =>
     row.auto[field.id] !== undefined ? toFormValue(row.auto[field.id], field) : row.values[field.id];
 
-  /** 来源为关联字段、目标非关联时取展示文本（关联单元格值是 { text, recordIds }） */
+  /** 引用类来源（关联、人员）、目标非引用类时取展示文本（关联值是 { text, recordIds }，人员值是人员对象数组） */
   const sourceValueFor = (raw: unknown, from: FieldMetaLite, to: FieldMetaLite): unknown =>
-    isLinkType(from.type) && !isLinkType(to.type) ? formatCellValue(raw, from) : raw;
+    isRefType(from.type) && !isRefType(to.type) ? formatCellValue(raw, from) : raw;
 
   /** 子表字段有效值：有映射且来源有值 → 自动带出（只读）；否则取用户输入 */
   const subValueOf = (
@@ -420,8 +421,8 @@ export function DocForm({ open, config, fields, onCancel, onSaved }: Props) {
       if (!isEmptyValue(raw)) return { value: toFormValue(raw, field), auto: true };
       return { value: sub.values[field.id], auto: false };
     }
-    // main：来源为关联字段时取主表关联记录的展示文本
-    if (isLinkType(resolved.from.type) && !isLinkType(field.type)) {
+    // main：来源为引用类字段（关联、人员）时取展示文本
+    if (isRefType(resolved.from.type) && !isRefType(field.type)) {
       const rawMain =
         row.auto[resolved.from.id] !== undefined
           ? row.auto[resolved.from.id]

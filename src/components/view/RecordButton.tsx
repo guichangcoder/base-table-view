@@ -196,11 +196,31 @@ function renderTemplate(template: string, format: HttpBodyFormat, ctx: TemplateC
 }
 
 /**
+ * 探测目标地址是否允许浏览器跨域读取响应。
+ * 同源直接放行；跨域先发一次 OPTIONS 预判，避免"真实请求先发一次、失败后再补发一次"造成重复提交。
+ */
+async function corsReadable(url: string): Promise<boolean> {
+  let target: URL;
+  try {
+    target = new URL(url, window.location.href);
+  } catch {
+    return true;
+  }
+  if (target.origin === window.location.origin) return true;
+  try {
+    await fetch(url, { method: 'OPTIONS', mode: 'cors' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 按配置发送 HTTP 请求（对齐工作流「发送 HTTP 请求」节点）。
  *
- * 浏览器限制：带自定义请求头或非简单 Content-Type 时会先发跨域预检，
- * 预检不通过则请求根本不会发出（不会误触发），此时退化为 no-cors 简单请求
- * （一定发得出去，但读不到响应、自定义头会被丢弃）。
+ * 浏览器限制：跨域且预检不通过时读不到响应，此时只发一次 no-cors 简单请求
+ * （一定发得出去，但读不到响应、自定义头会被丢弃）。通过预检判定后再选发送方式，
+ * 保证一次点击只投递一次真实请求。
  */
 async function sendRequest(
   cfg: ButtonHttpConfig,
@@ -228,10 +248,8 @@ async function sendRequest(
     }
   }
 
-  try {
-    const res = await fetch(url, { method, headers, body });
-    return { result: res.ok ? 'ok' : 'failed', degraded: false };
-  } catch {
+  // 跨域且读不到响应时走 no-cors：只投递一次，避免"先发一次再补发"导致重复提交
+  if (!(await corsReadable(url))) {
     // no-cors 只允许简单方法与简单 Content-Type，其余自定义头会被浏览器丢弃
     const simpleHeaders: Record<string, string> = {};
     const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type');
@@ -245,6 +263,13 @@ async function sendRequest(
     } catch {
       return { result: 'failed', degraded: false };
     }
+  }
+
+  try {
+    const res = await fetch(url, { method, headers, body });
+    return { result: res.ok ? 'ok' : 'failed', degraded: false };
+  } catch {
+    return { result: 'failed', degraded: false };
   }
 }
 

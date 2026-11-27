@@ -4,15 +4,17 @@ import { FieldType } from '@lark-base-open/js-sdk';
 import type { FieldMetaLite, FilterItem, PluginData, RecordRow } from '../../types';
 import { visibleFieldIds } from '../../utils/configOps';
 import { formatCellValue } from '../../utils/valueConverter';
-import { isTextType, loadViewMeta, listSelectOptions, type SelectOptionLite } from '../../services/baseService';
+import { isLinkType, isTextType, loadViewMeta, listSelectOptions, type SelectOptionLite } from '../../services/baseService';
 import { docReady } from '../../services/docService';
 import { clearDraft, loadDraft } from '../../services/draftService';
 import {
   addRecord,
   getRecordById,
+  listLinkCandidates,
   listRecords,
   listUserCandidates,
   updateRecord,
+  type LinkCandidate,
   type UserCandidate,
 } from '../../services/recordService';
 import { RecordDetail } from './RecordDetail';
@@ -36,6 +38,8 @@ const FILTERABLE_TYPES = [
   FT.Email,
   FT.Url,
   FT.Checkbox,
+  FT.SingleLink,
+  FT.DuplexLink,
 ].filter((v) => typeof v === 'number');
 
 function isNumberType(t?: number): boolean {
@@ -58,6 +62,13 @@ function operatorsFor(type?: number): Array<{ label: string; value: FilterItem['
     // 复选框的筛选条件只允许 is + boolean，其余算非法条件
     return [{ label: '等于', value: 'is' }];
   }
+  if (typeof type === 'number' && isLinkType(type)) {
+    // 关联字段按关联记录筛选，SDK 只支持 contains（值为记录 id）
+    return [
+      { label: '包含', value: 'contains' },
+      { label: '不为空', value: 'isNotEmpty' },
+    ];
+  }
   if (type === FT.SingleSelect || type === FT.MultiSelect || type === FT.User) {
     return [
       { label: '等于', value: 'is' },
@@ -73,6 +84,7 @@ function operatorsFor(type?: number): Array<{ label: string; value: FilterItem['
 
 function defaultOperator(type?: number): FilterItem['operator'] {
   if (type === FT.Checkbox) return 'is';
+  if (typeof type === 'number' && isLinkType(type)) return 'contains';
   if (type === FT.SingleSelect || type === FT.MultiSelect || type === FT.User) return 'is';
   if (isNumberType(type) || isDateType(type)) return 'is';
   return 'contains';
@@ -109,6 +121,8 @@ export function Workbench({ config }: Props) {
   const [userOptions, setUserOptions] = useState<Record<string, UserCandidate[]>>({});
   /** 单选/多选筛选项的原生选项（元信息可能不全，按字段补读） */
   const [selectOptions, setSelectOptions] = useState<Record<string, SelectOptionLite[]>>({});
+  /** 关联字段筛选项：关联表的候选记录（按记录 id 过滤） */
+  const [linkOptions, setLinkOptions] = useState<Record<string, LinkCandidate[]>>({});
 
   const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<{ mode: 'create' | 'edit' } | null>(null);
@@ -211,6 +225,25 @@ export function Workbench({ config }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.tableId, effectiveFilterIds.join(','), fields]);
 
+  // 4) 筛选字段里关联字段的候选记录（关联表按首列文本展示）
+  useEffect(() => {
+    if (!config.tableId) return;
+    let alive = true;
+    effectiveFilterIds.forEach((id) => {
+      const field = fieldMap.get(id);
+      if (!field || !isLinkType(field.type) || !field.linkTableId || linkOptions[id]) return;
+      listLinkCandidates(field.linkTableId, { limit: 200 })
+        .then((list) => {
+          if (alive) setLinkOptions((prev) => ({ ...prev, [id]: list }));
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.tableId, effectiveFilterIds.join(','), fields]);
+
   const activeFilters = useMemo<FilterItem[]>(
     () =>
       effectiveFilterIds
@@ -227,7 +260,7 @@ export function Workbench({ config }: Props) {
 
   const activeKey = `${keyword}|${JSON.stringify(activeFilters)}`;
 
-  // 3) 输入防抖后生效
+  // 5) 输入防抖后生效
   useEffect(() => {
     const timer = setTimeout(() => setApplied({ filters: activeFilters, keyword }), 350);
     return () => clearTimeout(timer);
@@ -289,14 +322,14 @@ export function Workbench({ config }: Props) {
     }
   };
 
-  // 4) 条件变化 → 重新取第一页
+  // 6) 条件变化 → 重新取第一页
   useEffect(() => {
     if (!config.tableId || fields.length === 0) return;
     void fetchPage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.tableId, fields, applied]);
 
-  // 5) 刷新后恢复上次保存的草稿：编辑态重新选中该记录，新建态直接打开新增表单
+  // 7) 刷新后恢复上次保存的草稿：编辑态重新选中该记录，新建态直接打开新增表单
   useEffect(() => {
     if (!config.tableId || fields.length === 0 || readyTableId !== config.tableId) return;
     if (restoreDoneRef.current === config.tableId) return;
@@ -456,6 +489,25 @@ export function Workbench({ config }: Props) {
     void fetchPage(true);
   };
 
+  /** 关联字段筛选：远程搜索关联表记录，并保留已选中的那条，避免下拉回显成记录 id */
+  const searchLinkCandidates = (field: FieldMetaLite, keyword: string) => {
+    if (!field.linkTableId) return;
+    void listLinkCandidates(field.linkTableId, { keyword, limit: 100 })
+      .then((list) =>
+        setLinkOptions((prev) => {
+          const cur = prev[field.id] ?? [];
+          const selectedId = filterValues[field.id] ?? '';
+          const keep = cur.filter((c) => c.id === selectedId);
+          const seen = new Set(keep.map((c) => c.id));
+          return {
+            ...prev,
+            [field.id]: [...keep, ...list.filter((c) => !seen.has(c.id))].slice(0, 300),
+          };
+        }),
+      )
+      .catch(() => undefined);
+  };
+
   const renderFilterValue = (field: FieldMetaLite) => {
     const value = filterValues[field.id] ?? '';
     const op = filterOps[field.id] ?? defaultOperator(field.type);
@@ -505,6 +557,24 @@ export function Workbench({ config }: Props) {
           filter
           style={{ width: '100%' }}
           optionList={options.map((u) => ({ label: u.name, value: u.id }))}
+          onChange={(v) => setFilterValues((prev) => ({ ...prev, [field.id]: v ? String(v) : '' }))}
+        />
+      );
+    }
+
+    if (isLinkType(field.type)) {
+      const options = linkOptions[field.id] ?? [];
+      return (
+        <Select
+          size="small"
+          placeholder={options.length ? '请选择关联记录' : '读取关联记录…'}
+          value={value || undefined}
+          showClear
+          filter
+          remote
+          style={{ width: '100%' }}
+          optionList={options.map((c) => ({ label: c.name || '（未命名记录）', value: c.id }))}
+          onSearch={(kw) => searchLinkCandidates(field, kw)}
           onChange={(v) => setFilterValues((prev) => ({ ...prev, [field.id]: v ? String(v) : '' }))}
         />
       );

@@ -96,6 +96,10 @@ export function isEditableType(type: number): boolean {
 export function isLinkType(type: number): boolean {
   return type === FT.SingleLink || type === FT.DuplexLink;
 }
+/** 引用类字段：关联、人员。这类单元格值是对象/对象数组，带出到普通字段时要取展示文本 */
+export function isRefType(type: number): boolean {
+  return isLinkType(type) || type === FT.User;
+}
 export function isTextType(type: number): boolean {
   return TEXT_TYPES.includes(type);
 }
